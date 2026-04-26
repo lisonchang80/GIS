@@ -1,11 +1,21 @@
 import { useRef, useState, type ReactNode } from 'react';
 import type { BaseMapId, BaseMapOption, VectorLayer } from './types';
 import { LayerItem } from './LayerItem';
+import { CollapsibleSection } from './CollapsibleSection';
 
 interface Props {
   basemaps: BaseMapOption[];
   activeBasemap: BaseMapId;
   onBasemapChange: (id: BaseMapId) => void;
+  basemapVersionIndex: number;
+  onBasemapVersionChange: (index: number) => void;
+  basemapOpacity: number;
+  onBasemapOpacityChange: (value: number) => void;
+  onBasemapOpacityReset: () => void;
+  onPan: (dx: number, dy: number) => void;
+  onPanReset: () => void;
+  projectName: string;
+  onProjectNameChange: (name: string) => void;
   layers: VectorLayer[];
   onUpdateLayer: (id: string, patch: Partial<VectorLayer>) => void;
   onRemoveLayer: (id: string) => void;
@@ -16,6 +26,7 @@ interface Props {
   activeAttributesLayerId: string | null;
   activeStyleLayerId: string | null;
   onFiles: (files: FileList) => void;
+  beforeBasemap?: ReactNode;
   children?: ReactNode;
 }
 
@@ -24,16 +35,39 @@ export function LayerPanel(p: Props) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
   const [overPosition, setOverPosition] = useState<'above' | 'below' | null>(null);
+  const [basemapCollapsed, setBasemapCollapsed] = useState(true);
+
+  const activeBase = p.basemaps.find((b) => b.id === p.activeBasemap);
+  const versions = activeBase?.versions;
+  const hasVersions = !!versions && versions.length > 0;
+  const versionIndex = hasVersions
+    ? Math.max(0, Math.min(p.basemapVersionIndex, versions.length - 1))
+    : 0;
+  const versionLabel = hasVersions ? versions[versionIndex].label : '—';
+  const defaultIdx = hasVersions ? activeBase?.defaultVersionIndex ?? versions.length - 1 : 0;
+
+  const PAN_PX = 120;
 
   return (
     <aside className="panel">
-      <div className="panel-section">
+      <div className="panel-section panel-header">
         <h1 className="panel-title">Web GIS</h1>
-        <p className="panel-sub">圖層管理與空間資料檢視</p>
+        <input
+          type="text"
+          className="project-name-input"
+          value={p.projectName}
+          onChange={(e) => p.onProjectNameChange(e.target.value)}
+          placeholder="專案名稱"
+        />
       </div>
 
-      <div className="panel-section">
-        <label className="label">底圖</label>
+      {p.beforeBasemap}
+
+      <CollapsibleSection
+        title="底圖"
+        collapsed={basemapCollapsed}
+        onToggle={() => setBasemapCollapsed((c) => !c)}
+      >
         <select
           className="select"
           value={p.activeBasemap}
@@ -45,36 +79,91 @@ export function LayerPanel(p: Props) {
             </option>
           ))}
         </select>
-      </div>
 
-      <div className="panel-section">
-        <label className="label">匯入資料</label>
-        <input
-          ref={fileRef}
-          type="file"
-          multiple
-          accept=".geojson,.json,.kml,.gpx,.zip,.shp"
-          style={{ display: 'none' }}
-          onChange={(e) => {
-            if (e.target.files && e.target.files.length > 0) {
-              p.onFiles(e.target.files);
-              if (fileRef.current) fileRef.current.value = '';
-            }
-          }}
-        />
-        <button className="btn primary" onClick={() => fileRef.current?.click()}>
-          選擇檔案…
-        </button>
-        <p className="hint">支援 GeoJSON / KML / GPX / Shapefile (.zip)</p>
-      </div>
+        <div className="control-row">
+          <label className="control-label">年份</label>
+          <button
+            className="btn xs"
+            disabled={!hasVersions || versionIndex === 0}
+            onClick={() => p.onBasemapVersionChange(versionIndex - 1)}
+            title="上一個年份"
+          >◀</button>
+          <span className="control-value year-label">{versionLabel}</span>
+          <button
+            className="btn xs"
+            disabled={!hasVersions || versionIndex >= (versions?.length ?? 1) - 1}
+            onClick={() => p.onBasemapVersionChange(versionIndex + 1)}
+            title="下一個年份"
+          >▶</button>
+          <button
+            className="btn xs"
+            disabled={!hasVersions || versionIndex === defaultIdx}
+            onClick={() => p.onBasemapVersionChange(defaultIdx)}
+            title="跳到最新"
+          >現在</button>
+        </div>
+
+        <div className="control-row">
+          <label className="control-label">透明度</label>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={p.basemapOpacity}
+            onChange={(e) => p.onBasemapOpacityChange(parseFloat(e.target.value))}
+            className="slider"
+          />
+          <span className="control-value">{Math.round(p.basemapOpacity * 100)}%</span>
+          <button
+            className="btn xs"
+            onClick={p.onBasemapOpacityReset}
+            disabled={p.basemapOpacity === 1}
+            title="還原為 100%"
+          >還原</button>
+        </div>
+
+        <div className="control-row">
+          <label className="control-label">平移</label>
+          <div className="pan-pad">
+            <button className="btn xs pan-up" onClick={() => p.onPan(0, -PAN_PX)} title="上">↑</button>
+            <button className="btn xs pan-left" onClick={() => p.onPan(-PAN_PX, 0)} title="左">←</button>
+            <button className="btn xs pan-center" onClick={p.onPanReset} title="還原視野">⌂</button>
+            <button className="btn xs pan-right" onClick={() => p.onPan(PAN_PX, 0)} title="右">→</button>
+            <button className="btn xs pan-down" onClick={() => p.onPan(0, PAN_PX)} title="下">↓</button>
+          </div>
+        </div>
+      </CollapsibleSection>
 
       {p.children}
 
       <div className="panel-section layers-section">
-        <label className="label">
-          圖層 <span className="counter">{p.layers.length}</span>
-          {p.layers.length > 1 && <span className="hint-inline">拖曳排序</span>}
-        </label>
+        <div className="layers-header">
+          <span className="label">
+            圖層 <span className="counter">{p.layers.length}</span>
+            {p.layers.length > 1 && <span className="hint-inline">拖曳排序</span>}
+          </span>
+          <button
+            className="btn xs primary"
+            onClick={() => fileRef.current?.click()}
+            title="支援 GeoJSON / KML / GPX / Shapefile (.zip)"
+          >
+            匯入圖層
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            multiple
+            accept=".geojson,.json,.kml,.gpx,.zip,.shp"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              if (e.target.files && e.target.files.length > 0) {
+                p.onFiles(e.target.files);
+                if (fileRef.current) fileRef.current.value = '';
+              }
+            }}
+          />
+        </div>
         {p.layers.length === 0 && <p className="empty">尚無圖層，請匯入檔案</p>}
         <ul className="layer-list">
           {p.layers.map((layer, i) => (

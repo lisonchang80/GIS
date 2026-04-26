@@ -14,6 +14,9 @@ export interface MapViewState {
 
 export interface ProjectPayload {
   basemapId: BaseMapId;
+  basemapVersionIndex?: number;
+  basemapOpacity?: number;
+  projectName?: string;
   layers: VectorLayer[];
   drawings?: GeoJSONStoreFeatures[];
   mapView?: MapViewState;

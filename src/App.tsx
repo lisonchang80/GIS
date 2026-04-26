@@ -8,9 +8,11 @@ import { DrawToolbar, type DrawMode } from './DrawToolbar';
 import { ProjectBar } from './ProjectBar';
 import { AttributeTable } from './AttributeTable';
 import { StylePopover } from './StylePopover';
-import { BASEMAPS } from './basemaps';
+import { searchLand, type LandQueryParams } from './landQuery';
+import { BASEMAPS, basemapDefaultVersionIndex } from './basemaps';
 import type { BaseMapId, VectorLayer } from './types';
 import { detectKind, ensureNames, fileToGeoJSON, geometryBounds } from './importers';
+import { syncAllContours, syncContoursForSource, syncSingleContour } from './contour';
 import {
   clearProject,
   downloadProject,
@@ -24,6 +26,22 @@ import './App.css';
 const PALETTE = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
 const DEFAULT_BASEMAP: BaseMapId = 'satellite-google';
 const TERRA_DRAW_INTERNAL_KEYS = new Set(['mode', 'selected', 'midPoint', 'midPointFeature']);
+
+function computeContourKey(wl: VectorLayer['waterLevel']): string {
+  if (!wl) return '';
+  return JSON.stringify({
+    fill: wl.fill ?? null,
+    lines: wl.lines ?? null,
+    arrows: wl.arrows ?? null,
+    model: wl.model ?? null,
+    sourceKind: wl.sourceKind ?? null,
+    sourceTabId: wl.sourceTabId ?? null,
+    sourceSubId: wl.sourceSubId ?? null,
+    logTransform: wl.logTransform ?? null,
+    clampNegative: wl.clampNegative ?? null,
+    indicatorThreshold: wl.indicatorThreshold ?? null,
+  });
+}
 
 function cleanDrawProps(props: Record<string, unknown> | null | undefined): Record<string, unknown> {
   if (!props) return {};
@@ -39,6 +57,9 @@ function cleanDrawProps(props: Record<string, unknown> | null | undefined): Reco
 export default function App() {
   const [initialized, setInitialized] = useState(false);
   const [basemapId, setBasemapId] = useState<BaseMapId>(DEFAULT_BASEMAP);
+  const [basemapVersionIndex, setBasemapVersionIndex] = useState(0);
+  const [basemapOpacity, setBasemapOpacity] = useState(1);
+  const [projectName, setProjectName] = useState('未命名專案');
   const [layers, setLayers] = useState<VectorLayer[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [drawMode, setDrawMode] = useState<DrawMode>('static');
@@ -70,10 +91,18 @@ export default function App() {
     loadProject().then((project) => {
       if (project) {
         setBasemapId(project.basemapId);
-        setLayers(project.layers.map((l) => ({ ...l, data: ensureNames(l.data) })));
+        const base = BASEMAPS.find((b) => b.id === project.basemapId);
+        const defaultIdx = base ? basemapDefaultVersionIndex(base) : 0;
+        setBasemapVersionIndex(project.basemapVersionIndex ?? defaultIdx);
+        setBasemapOpacity(project.basemapOpacity ?? 1);
+        if (project.projectName) setProjectName(project.projectName);
+        setLayers(syncAllContours(project.layers.map((l) => ({ ...l, data: ensureNames(l.data) }))));
         if (typeof project.colorCursor === 'number') colorCursor.current = project.colorCursor;
         pendingProjectRef.current = project;
         setSavedAt(new Date(project.savedAt));
+      } else {
+        const base = BASEMAPS.find((b) => b.id === DEFAULT_BASEMAP);
+        if (base) setBasemapVersionIndex(basemapDefaultVersionIndex(base));
       }
       setInitialized(true);
     });
@@ -148,6 +177,9 @@ export default function App() {
         : undefined;
       saveProject({
         basemapId,
+        basemapVersionIndex,
+        basemapOpacity,
+        projectName,
         layers,
         drawings,
         mapView,
@@ -157,7 +189,21 @@ export default function App() {
         .catch((e) => console.warn('saveProject failed', e));
     }, 500);
     return () => clearTimeout(handle);
-  }, [initialized, basemapId, layers, drawCount, mapMoveTick]);
+  }, [initialized, basemapId, basemapVersionIndex, basemapOpacity, projectName, layers, drawCount, mapMoveTick]);
+
+  const handleBasemapChange = useCallback((id: BaseMapId) => {
+    setBasemapId(id);
+    const base = BASEMAPS.find((b) => b.id === id);
+    if (base) setBasemapVersionIndex(basemapDefaultVersionIndex(base));
+  }, []);
+
+  const handlePan = useCallback((dx: number, dy: number) => {
+    mapRef.current?.panBy([dx, dy], { duration: 350 });
+  }, []);
+
+  const handlePanReset = useCallback(() => {
+    mapRef.current?.flyTo({ center: [121, 23.8], zoom: 6, duration: 700 });
+  }, []);
 
   const handleFiles = useCallback(async (files: FileList) => {
     setError(null);
@@ -199,7 +245,44 @@ export default function App() {
   }, []);
 
   const updateLayer = useCallback((id: string, patch: Partial<VectorLayer>) => {
-    setLayers((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+    setLayers((prev) => {
+      const next = prev.map((l) => (l.id === id ? { ...l, ...patch } : l));
+      if ('data' in patch || 'gwConcTabs' in patch) {
+        return syncContoursForSource(next, id);
+      }
+      if ('waterLevel' in patch) {
+        const before = prev.find((l) => l.id === id);
+        const after = next.find((l) => l.id === id);
+        const beforeKey = computeContourKey(before?.waterLevel);
+        const afterKey = computeContourKey(after?.waterLevel);
+        if (beforeKey !== afterKey && after?.waterLevel?.sourceLayerId) {
+          return syncSingleContour(next, id);
+        }
+      }
+      return next;
+    });
+  }, []);
+
+  const handleDateLabelMove = useCallback(
+    (id: string, lng: number, lat: number) => {
+      setLayers((prev) =>
+        prev.map((l) => {
+          if (l.id !== id || !l.waterLevel) return l;
+          return {
+            ...l,
+            waterLevel: {
+              ...l.waterLevel,
+              dateLabel: { ...(l.waterLevel.dateLabel ?? {}), visible: true, lng, lat },
+            },
+          };
+        }),
+      );
+    },
+    [],
+  );
+
+  const addLayer = useCallback((layer: VectorLayer) => {
+    setLayers((prev) => [layer, ...prev]);
   }, []);
 
   const removeLayer = useCallback((id: string) => {
@@ -376,7 +459,12 @@ export default function App() {
     try {
       const project = await importProjectFile(file);
       setBasemapId(project.basemapId);
-      setLayers(project.layers.map((l) => ({ ...l, data: ensureNames(l.data) })));
+      const base = BASEMAPS.find((b) => b.id === project.basemapId);
+      const defaultIdx = base ? basemapDefaultVersionIndex(base) : 0;
+      setBasemapVersionIndex(project.basemapVersionIndex ?? defaultIdx);
+      setBasemapOpacity(project.basemapOpacity ?? 1);
+      setProjectName(project.projectName ?? '未命名專案');
+      setLayers(syncAllContours(project.layers.map((l) => ({ ...l, data: ensureNames(l.data) }))));
       colorCursor.current = project.colorCursor ?? 0;
       if (project.mapView && mapRef.current) {
         mapRef.current.jumpTo({
@@ -409,19 +497,79 @@ export default function App() {
   const handleMapPick = useCallback((lng: number, lat: number) => {
     if (!pickingCoords) return;
     const { layerId, featureIndex } = pickingCoords;
-    setLayers((prev) => prev.map((l) => {
-      if (l.id !== layerId) return l;
-      const newFeatures = l.data.features.map((f, i) => {
-        if (i !== featureIndex) return f;
-        if (f.geometry?.type !== 'Point') return f;
-        return { ...f, geometry: { type: 'Point' as const, coordinates: [lng, lat] } };
+    setLayers((prev) => {
+      const next = prev.map((l) => {
+        if (l.id !== layerId) return l;
+        const newFeatures = l.data.features.map((f, i) => {
+          if (i !== featureIndex) return f;
+          if (f.geometry?.type !== 'Point') return f;
+          return { ...f, geometry: { type: 'Point' as const, coordinates: [lng, lat] } };
+        });
+        return { ...l, data: { ...l.data, features: newFeatures } };
       });
-      return { ...l, data: { ...l.data, features: newFeatures } };
-    }));
+      return syncContoursForSource(next, layerId);
+    });
     setPickingCoords(null);
   }, [pickingCoords]);
 
   const handleCancelPick = useCallback(() => setPickingCoords(null), []);
+
+  const handleAddPolygonByLandNo = async (params: LandQueryParams): Promise<string | null> => {
+    const draw = drawRef.current;
+    const map = mapRef.current;
+    if (!draw) return '地圖尚未就緒';
+    try {
+      const result = await searchLand(params);
+      if (result.features.features.length === 0) {
+        return `查無資料：${result.notFound[0] ?? `${params.city},${params.section},${params.parcel}`}`;
+      }
+      const roundCoord = (c: number[]): number[] => [
+        Math.round(c[0] * 1e9) / 1e9,
+        Math.round(c[1] * 1e9) / 1e9,
+      ];
+      const roundPolygon = (rings: number[][][]): number[][][] =>
+        rings.map((ring) => ring.map(roundCoord));
+      type DrawFeatures = Parameters<typeof draw.addFeatures>[0];
+      type DrawFeature = DrawFeatures[number];
+      type DrawProps = DrawFeature['properties'];
+      const drawFeatures: DrawFeatures = [];
+      for (const f of result.features.features) {
+        if (!f.geometry) continue;
+        const baseProps = { mode: 'polygon', ...(f.properties ?? {}) } as unknown as DrawProps;
+        if (f.geometry.type === 'Polygon') {
+          drawFeatures.push({
+            id: crypto.randomUUID(),
+            type: 'Feature',
+            geometry: { type: 'Polygon', coordinates: roundPolygon(f.geometry.coordinates) },
+            properties: baseProps,
+          });
+        } else if (f.geometry.type === 'MultiPolygon') {
+          for (const polygon of f.geometry.coordinates) {
+            drawFeatures.push({
+              id: crypto.randomUUID(),
+              type: 'Feature',
+              geometry: { type: 'Polygon', coordinates: roundPolygon(polygon) },
+              properties: baseProps,
+            });
+          }
+        }
+      }
+      if (drawFeatures.length === 0) return '查詢結果無多邊形幾何';
+      const addResult = draw.addFeatures(drawFeatures);
+      const failed = addResult?.find((r) => r && r.valid === false);
+      if (failed) return failed.reason ?? '幾何驗證失敗';
+      const b = geometryBounds(result.features);
+      if (b && map) {
+        map.fitBounds(
+          [[b[0], b[1]], [b[2], b[3]]],
+          { padding: 80, duration: 700, maxZoom: 19 },
+        );
+      }
+      return null;
+    } catch (e) {
+      return (e as Error).message;
+    }
+  };
 
   useEffect(() => {
     if (!pickingCoords) return;
@@ -436,6 +584,10 @@ export default function App() {
     if (!window.confirm('確定要清除瀏覽器內的存檔嗎？\n目前畫面上的圖層與繪製也會被清空。')) return;
     await clearProject();
     setBasemapId(DEFAULT_BASEMAP);
+    const base = BASEMAPS.find((b) => b.id === DEFAULT_BASEMAP);
+    if (base) setBasemapVersionIndex(basemapDefaultVersionIndex(base));
+    setBasemapOpacity(1);
+    setProjectName('未命名專案');
     setLayers([]);
     colorCursor.current = 0;
     drawRef.current?.clear();
@@ -456,7 +608,16 @@ export default function App() {
       <LayerPanel
         basemaps={BASEMAPS}
         activeBasemap={basemapId}
-        onBasemapChange={setBasemapId}
+        onBasemapChange={handleBasemapChange}
+        basemapVersionIndex={basemapVersionIndex}
+        onBasemapVersionChange={setBasemapVersionIndex}
+        basemapOpacity={basemapOpacity}
+        onBasemapOpacityChange={setBasemapOpacity}
+        onBasemapOpacityReset={() => setBasemapOpacity(1)}
+        onPan={handlePan}
+        onPanReset={handlePanReset}
+        projectName={projectName}
+        onProjectNameChange={setProjectName}
         layers={layers}
         onUpdateLayer={updateLayer}
         onRemoveLayer={removeLayer}
@@ -467,13 +628,15 @@ export default function App() {
         activeAttributesLayerId={attributesLayerId}
         activeStyleLayerId={stylePopoverLayerId}
         onFiles={handleFiles}
+        beforeBasemap={
+          <ProjectBar
+            savedAt={savedAt}
+            onExport={handleExportProject}
+            onImport={handleImportProject}
+            onClear={handleClearProject}
+          />
+        }
       >
-        <ProjectBar
-          savedAt={savedAt}
-          onExport={handleExportProject}
-          onImport={handleImportProject}
-          onClear={handleClearProject}
-        />
         <DrawToolbar
           activeMode={drawMode}
           featureCount={drawCount}
@@ -482,16 +645,20 @@ export default function App() {
           onClearAll={handleClearAll}
           onExport={handleExportDraw}
           onAddPointByCoords={handleAddPointByCoords}
+          onAddPolygonByLandNo={handleAddPolygonByLandNo}
         />
       </LayerPanel>
       <main className="map-area">
         <MapView
           basemap={basemap}
+          basemapVersionIndex={basemapVersionIndex}
+          basemapOpacity={basemapOpacity}
           layers={layers}
           onMapReady={handleMapReady}
           onDrawReady={handleDrawReady}
           pickMode={!!pickingCoords}
           onPick={handleMapPick}
+          onDateLabelMove={handleDateLabelMove}
         />
         {error && (
           <div className="toast error" onClick={() => setError(null)}>
@@ -508,6 +675,7 @@ export default function App() {
             onClose={() => setAttributesLayerId(null)}
             onZoomFeature={zoomToFeature}
             onUpdateLayer={updateLayer}
+            onAddLayer={addLayer}
             onDuplicateLayer={duplicateLayer}
             onExportLayer={exportLayerAsGeoJSON}
             pickingActive={pickingCoords?.layerId === layer.id}

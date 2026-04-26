@@ -27,6 +27,38 @@ interface Props {
 export function LayerItem(p: Props) {
   const [editingName, setEditingName] = useState(false);
   const [draftName, setDraftName] = useState(p.layer.name);
+  const [waterLevelExpanded, setWaterLevelExpanded] = useState(false);
+
+  const wl = p.layer.waterLevel;
+  const isWaterLevel = !!wl;
+  const isWaterLevelMulti = !!wl && wl.dates.length > 1;
+  const wlActiveIdx = wl ? Math.max(0, wl.dates.indexOf(wl.activeDate)) : 0;
+
+  const isMultiSub = !!wl?.substances && wl.substances.length > 0;
+
+  const setModel = (model: 'idw' | 'tin' | 'kriging' | 'indicator') => {
+    if (!wl) return;
+    p.onUpdate({ waterLevel: { ...wl, model } });
+  };
+
+  const setActiveSubstance = (subId: string) => {
+    if (!wl) return;
+    p.onUpdate({ waterLevel: { ...wl, activeSubstance: subId } });
+  };
+
+  const setActiveDate = (date: string) => {
+    if (!wl) return;
+    p.onUpdate({
+      waterLevel: { ...wl, activeDate: date },
+      name: isMultiSub ? p.layer.name : date,
+    });
+  };
+
+  const stepDate = (delta: number) => {
+    if (!wl) return;
+    const next = Math.max(0, Math.min(wl.dates.length - 1, wlActiveIdx + delta));
+    if (next !== wlActiveIdx) setActiveDate(wl.dates[next]);
+  };
 
   const commitName = () => {
     const trimmed = draftName.trim();
@@ -105,14 +137,76 @@ export function LayerItem(p: Props) {
             {p.layer.name}
           </span>
         )}
-        <button
-          className={`icon-btn ${p.attributesActive ? 'active' : ''}`}
-          title="開啟 / 關閉屬性表"
-          onClick={p.onShowAttributes}
-        >▤</button>
+        {isWaterLevel ? (
+          <button
+            className={`icon-btn ${waterLevelExpanded ? 'active' : ''}`}
+            title={isWaterLevelMulti ? '展開日期/模型' : '展開模型'}
+            onClick={() => setWaterLevelExpanded((v) => !v)}
+          >{waterLevelExpanded ? '▾' : '▸'}</button>
+        ) : (
+          <button
+            className={`icon-btn ${p.attributesActive ? 'active' : ''}`}
+            title="開啟 / 關閉屬性表"
+            onClick={p.onShowAttributes}
+          >▤</button>
+        )}
         <button className="icon-btn" title="縮放至圖層" onClick={p.onZoom}>⤢</button>
         <button className="icon-btn danger" title="移除" onClick={p.onRemove}>×</button>
       </div>
+      {isWaterLevel && waterLevelExpanded && wl && (
+        <>
+          {isWaterLevelMulti && (
+            <div className="water-level-row">
+              <button
+                className="btn xs"
+                onClick={() => stepDate(-1)}
+                disabled={wlActiveIdx <= 0}
+                title="上一個日期"
+              >◀</button>
+              <span className="water-level-date">{wl.activeDate}</span>
+              <button
+                className="btn xs"
+                onClick={() => stepDate(1)}
+                disabled={wlActiveIdx >= wl.dates.length - 1}
+                title="下一個日期"
+              >▶</button>
+              <span className="water-level-counter">
+                {wlActiveIdx + 1} / {wl.dates.length}
+              </span>
+            </div>
+          )}
+          {isMultiSub && (
+            <div className="water-level-row water-level-sub-row">
+              {wl.substances!.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  className={`btn xs water-level-sub-btn${wl.activeSubstance === s.id ? ' active' : ''}`}
+                  onClick={() => setActiveSubstance(s.id)}
+                  title={s.name}
+                >
+                  {s.name}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="water-level-row">
+            <label className="water-level-model-label">模型</label>
+            <select
+              className="select water-level-model-select"
+              value={wl.model ?? 'idw'}
+              onChange={(e) => setModel(e.target.value as 'idw' | 'tin' | 'kriging' | 'indicator')}
+            >
+              <option value="idw">IDW</option>
+              <option value="tin">TIN</option>
+              <option value="kriging">Kriging</option>
+              {isMultiSub || wl.sourceKind === 'gw-conc' ? (
+                <option value="indicator">Indicator</option>
+              ) : null}
+            </select>
+          </div>
+        </>
+      )}
     </li>
   );
 }

@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { CollapsibleSection } from './CollapsibleSection';
+import { TAIWAN_CITIES, type LandQueryParams } from './landQuery';
 
 export type DrawMode =
   | 'static'
@@ -35,12 +37,51 @@ interface Props {
   onClearAll: () => void;
   onExport: () => void;
   onAddPointByCoords: (lng: number, lat: number) => string | null;
+  onAddPolygonByLandNo: (params: LandQueryParams) => Promise<string | null>;
 }
 
 export function DrawToolbar(p: Props) {
   const [lng, setLng] = useState('');
   const [lat, setLat] = useState('');
   const [coordError, setCoordError] = useState<string | null>(null);
+  const [landCity, setLandCity] = useState<string>(TAIWAN_CITIES[0]);
+  const [landSection, setLandSection] = useState('');
+  const [landParcel, setLandParcel] = useState('');
+  const [landError, setLandError] = useState<string | null>(null);
+  const [landLoading, setLandLoading] = useState(false);
+  const landAbortRef = useRef<AbortController | null>(null);
+  const [collapsed, setCollapsed] = useState(true);
+
+  const handleAddLand = async () => {
+    setLandError(null);
+    if (!landSection.trim() || !landParcel.trim()) {
+      setLandError('段名與地號皆為必填');
+      return;
+    }
+    landAbortRef.current?.abort();
+    const controller = new AbortController();
+    landAbortRef.current = controller;
+    setLandLoading(true);
+    try {
+      const err = await p.onAddPolygonByLandNo({
+        city: landCity,
+        section: landSection,
+        parcel: landParcel,
+      });
+      if (controller.signal.aborted) return;
+      if (err) {
+        setLandError(err);
+        return;
+      }
+      setLandSection('');
+      setLandParcel('');
+    } finally {
+      if (landAbortRef.current === controller) {
+        setLandLoading(false);
+        landAbortRef.current = null;
+      }
+    }
+  };
 
   const handleAddCoord = () => {
     setCoordError(null);
@@ -68,11 +109,11 @@ export function DrawToolbar(p: Props) {
   };
 
   return (
-    <div className="panel-section">
-      <label className="label">
-        繪圖工具 <span className="counter">{p.featureCount}</span>
-      </label>
-
+    <CollapsibleSection
+      title={<>繪圖工具 <span className="counter">{p.featureCount}</span></>}
+      collapsed={collapsed}
+      onToggle={() => setCollapsed((c) => !c)}
+    >
       <div className="tool-grid">
         {TOOLS.map((t) => (
           <button
@@ -131,6 +172,55 @@ export function DrawToolbar(p: Props) {
         </div>
       )}
 
+      {p.activeMode === 'polygon' && (
+        <div className="coord-box">
+          <label className="label sublabel">輸入地號新增多邊形</label>
+          <select
+            className="select"
+            value={landCity}
+            onChange={(e) => setLandCity(e.target.value)}
+            disabled={landLoading}
+          >
+            {TAIWAN_CITIES.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+          <input
+            type="text"
+            className="coord-input"
+            style={{ width: '100%', marginTop: 6 }}
+            placeholder="段名（例：興雅段三小段）"
+            value={landSection}
+            onChange={(e) => setLandSection(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && !landLoading && handleAddLand()}
+            disabled={landLoading}
+          />
+          <div className="coord-row" style={{ marginTop: 6 }}>
+            <input
+              type="text"
+              className="coord-input"
+              placeholder="地號（例：123 或 123-4）"
+              value={landParcel}
+              onChange={(e) => setLandParcel(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && !landLoading && handleAddLand()}
+              disabled={landLoading}
+            />
+            <button
+              className="btn sm primary coord-add"
+              onClick={handleAddLand}
+              disabled={landLoading || !landSection.trim() || !landParcel.trim()}
+            >
+              {landLoading ? '查詢中…' : '新增'}
+            </button>
+          </div>
+          {landError ? (
+            <p className="hint error-hint">{landError}</p>
+          ) : (
+            <p className="hint">資料來源：twland.ronny.tw（地政司圖資）</p>
+          )}
+        </div>
+      )}
+
       <button
         className="btn sm primary"
         onClick={p.onExport}
@@ -139,6 +229,6 @@ export function DrawToolbar(p: Props) {
       >
         匯出為圖層
       </button>
-    </div>
+    </CollapsibleSection>
   );
 }

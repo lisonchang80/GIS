@@ -16,7 +16,56 @@ export function LayerIcon({ layer, onClick }: Props) {
   const center = size / 2;
 
   let content: React.ReactNode;
-  if (layer.kind === 'point') {
+  if (layer.waterLevel) {
+    const isGwConc = layer.waterLevel.sourceKind === 'gw-conc';
+    const isMulti = layer.waterLevel.dates.length > 1;
+    const isMultiSub = !!layer.waterLevel.substances && layer.waterLevel.substances.length > 0;
+    if (isGwConc) {
+      const innerCount = isMultiSub ? 2 : isMulti ? 1 : 0;
+      content = (
+        <g
+          fill="none"
+          stroke="#ef4444"
+          strokeWidth={1.7}
+          strokeOpacity={opacity}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <line x1={9} y1={3} x2={15} y2={3} />
+          <path d="M 10 3 L 10 7.5 A 7.5 7.5 0 1 0 14 7.5 L 14 3" />
+          {innerCount >= 1 && <circle cx={12} cy={14.5} r={4.5} />}
+          {innerCount >= 2 && <circle cx={12} cy={14.5} r={2.2} />}
+        </g>
+      );
+    } else {
+      const drop = (cx: number, top: number, bot: number) => {
+        const h = bot - top;
+        const w = h * 0.45;
+        return `M ${cx} ${top} C ${cx - w} ${top + h * 0.5}, ${cx - w} ${bot - h * 0.05}, ${cx} ${bot} C ${cx + w} ${bot - h * 0.05}, ${cx + w} ${top + h * 0.5}, ${cx} ${top} Z`;
+      };
+      const drops = isMulti
+        ? [
+            { top: 3, bot: 21 },
+            { top: 12, bot: 18 },
+          ]
+        : [{ top: 4, bot: 20 }];
+      content = (
+        <>
+          {drops.map((d, i) => (
+            <path
+              key={i}
+              d={drop(center, d.top, d.bot)}
+              fill="none"
+              stroke="#60a5fa"
+              strokeWidth={2}
+              strokeOpacity={opacity}
+              strokeLinejoin="round"
+            />
+          ))}
+        </>
+      );
+    }
+  } else if (layer.kind === 'point') {
     content = (
       <circle
         cx={center}

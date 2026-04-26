@@ -1,4 +1,5 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
+import { CollapsibleSection } from './CollapsibleSection';
 
 interface Props {
   savedAt: Date | null;
@@ -9,10 +10,14 @@ interface Props {
 
 export function ProjectBar(p: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const [collapsed, setCollapsed] = useState(true);
 
   return (
-    <div className="panel-section">
-      <label className="label">專案</label>
+    <CollapsibleSection
+      title="專案"
+      collapsed={collapsed}
+      onToggle={() => setCollapsed((c) => !c)}
+    >
       <div className="project-actions">
         <button className="btn sm" onClick={p.onExport}>匯出…</button>
         <button className="btn sm" onClick={() => fileRef.current?.click()}>匯入…</button>
@@ -34,6 +39,6 @@ export function ProjectBar(p: Props) {
           ? `✓ 已儲存於 ${p.savedAt.toLocaleTimeString('zh-TW', { hour12: false })}`
           : '尚未儲存'}
       </p>
-    </div>
+    </CollapsibleSection>
   );
 }

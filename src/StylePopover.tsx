@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type {
+  GwConcSubstance,
+  SubstanceStyle,
   VectorLayer,
   WaterLevelArrows,
   WaterLevelCustomBand,
@@ -10,6 +12,7 @@ import type {
   WaterLevelHeightLabel,
   WaterLevelLines,
 } from './types';
+import { makeGwConcDefaultsForSub } from './contour';
 
 const DASH_PRESETS: { value: WaterLevelDashStyle; svgDash?: string }[] = [
   { value: 'solid' },
@@ -121,6 +124,7 @@ const DEFAULT_HEIGHT_LABEL_UI: Required<WaterLevelHeightLabel> = {
 
 interface Props {
   layer: VectorLayer;
+  sourceLayer?: VectorLayer;
   onClose: () => void;
   onUpdate: (patch: Partial<VectorLayer>) => void;
 }
@@ -128,7 +132,7 @@ interface Props {
 const DEFAULT_GRADIENT = { from: '#cce6ff', to: '#003366' };
 const BAND_PALETTE = ['#22c55e', '#facc15', '#f97316', '#ef4444', '#a855f7', '#06b6d4'];
 
-export function StylePopover({ layer, onClose, onUpdate }: Props) {
+export function StylePopover({ layer, sourceLayer, onClose, onUpdate }: Props) {
   const stroke = layer.strokeColor ?? layer.color;
   const strokeW = layer.strokeWidth ?? 2;
   const radius = layer.pointRadius ?? 5;
@@ -176,7 +180,33 @@ export function StylePopover({ layer, onClose, onUpdate }: Props) {
       },
     });
   };
-  const fill: WaterLevelFill = layer.waterLevel?.fill ?? { mode: 'none' };
+  const wl = layer.waterLevel;
+  const isMultiSub = !!wl?.substances && wl.substances.length > 0;
+  const activeSubId = isMultiSub ? wl?.activeSubstance ?? wl?.substances?.[0]?.id : undefined;
+  const activeSubRef = isMultiSub ? wl?.substances?.find((s) => s.id === activeSubId) : undefined;
+
+  let activeSub: GwConcSubstance | undefined;
+  if (isMultiSub && activeSubId && sourceLayer) {
+    const tab = sourceLayer.gwConcTabs?.find((t) => t.id === wl?.sourceTabId);
+    activeSub = tab?.substances.find((s) => s.id === activeSubId);
+  }
+  const subDefaults = activeSub ? makeGwConcDefaultsForSub(activeSub) : { fill: undefined, lines: undefined };
+  const subOverride: SubstanceStyle | undefined =
+    isMultiSub && activeSubId ? wl?.substanceStyles?.[activeSubId] : undefined;
+  const hasSubOverride =
+    !!subOverride && (subOverride.fill !== undefined || subOverride.lines !== undefined || subOverride.arrows !== undefined);
+
+  const effectiveFill: WaterLevelFill = isMultiSub
+    ? (subOverride?.fill ?? subDefaults.fill ?? { mode: 'none' })
+    : (wl?.fill ?? { mode: 'none' });
+  const effectiveLines: WaterLevelLines | undefined = isMultiSub
+    ? (subOverride?.lines ?? subDefaults.lines)
+    : wl?.lines;
+  const effectiveArrows: WaterLevelArrows | undefined = isMultiSub
+    ? (subOverride?.arrows ?? wl?.arrows)
+    : wl?.arrows;
+
+  const fill: WaterLevelFill = effectiveFill;
   const fillMode: WaterLevelFillMode = fill.mode;
   const gradient = fill.gradient ?? DEFAULT_GRADIENT;
   const bands = fill.bands ?? [];
@@ -184,12 +214,12 @@ export function StylePopover({ layer, onClose, onUpdate }: Props) {
 
   const linesCfg: Required<WaterLevelLines> = {
     ...DEFAULT_LINES_UI,
-    ...(layer.waterLevel?.lines ?? {}),
+    ...(effectiveLines ?? {}),
   };
 
   const arrowsCfg: Required<WaterLevelArrows> = {
     ...DEFAULT_ARROWS_UI,
-    ...(layer.waterLevel?.arrows ?? {}),
+    ...(effectiveArrows ?? {}),
   };
 
   const [majorIntervalDraft, setMajorIntervalDraft] = useState<string>(String(linesCfg.majorInterval));
@@ -209,37 +239,44 @@ export function StylePopover({ layer, onClose, onUpdate }: Props) {
     }
   };
 
+  const writeSubstanceStyle = (next: SubstanceStyle) => {
+    if (!wl || !activeSubId) return;
+    const merged = { ...(wl.substanceStyles ?? {}), [activeSubId]: next };
+    onUpdate({ waterLevel: { ...wl, substanceStyles: merged } });
+  };
+
   const updateLines = (patch: Partial<WaterLevelLines>) => {
-    const wl = layer.waterLevel;
     if (!wl) return;
-    onUpdate({
-      waterLevel: {
-        ...wl,
-        lines: { ...linesCfg, ...patch },
-      },
-    });
+    if (isMultiSub) {
+      writeSubstanceStyle({ ...subOverride, lines: { ...linesCfg, ...patch } });
+      return;
+    }
+    onUpdate({ waterLevel: { ...wl, lines: { ...linesCfg, ...patch } } });
   };
 
   const updateArrows = (patch: Partial<WaterLevelArrows>) => {
-    const wl = layer.waterLevel;
     if (!wl) return;
-    onUpdate({
-      waterLevel: {
-        ...wl,
-        arrows: { ...arrowsCfg, ...patch },
-      },
-    });
+    if (isMultiSub) {
+      writeSubstanceStyle({ ...subOverride, arrows: { ...arrowsCfg, ...patch } });
+      return;
+    }
+    onUpdate({ waterLevel: { ...wl, arrows: { ...arrowsCfg, ...patch } } });
   };
 
   const updateFill = (patch: Partial<WaterLevelFill>) => {
-    const wl = layer.waterLevel;
     if (!wl) return;
-    onUpdate({
-      waterLevel: {
-        ...wl,
-        fill: { ...fill, ...patch },
-      },
-    });
+    if (isMultiSub) {
+      writeSubstanceStyle({ ...subOverride, fill: { ...fill, ...patch } });
+      return;
+    }
+    onUpdate({ waterLevel: { ...wl, fill: { ...fill, ...patch } } });
+  };
+
+  const resetSubstanceStyle = () => {
+    if (!wl || !activeSubId) return;
+    const next = { ...(wl.substanceStyles ?? {}) };
+    delete next[activeSubId];
+    onUpdate({ waterLevel: { ...wl, substanceStyles: next } });
   };
 
   const addBand = () => {
@@ -411,6 +448,27 @@ export function StylePopover({ layer, onClose, onUpdate }: Props) {
             <p className="hint" style={{ margin: '-4px 0 4px' }}>
               此圖層尚無「名稱」屬性，可至屬性表填入後即會顯示文字。
             </p>
+          )}
+
+          {isMultiSub && activeSubRef && (
+            <div className="popover-section">
+              <div className="popover-row" style={{ alignItems: 'center' }}>
+                <label className="popover-label">當前物質</label>
+                <span style={{ fontWeight: 600 }}>{activeSubRef.name}</span>
+                <button
+                  className="btn xs"
+                  type="button"
+                  disabled={!hasSubOverride}
+                  onClick={resetSubstanceStyle}
+                  title={hasSubOverride ? '清除此物質的自訂樣式' : '此物質尚未自訂樣式'}
+                >
+                  重設預設
+                </button>
+              </div>
+              <p className="hint" style={{ margin: '-2px 0 0' }}>
+                以下樣式僅套用於目前物質；切換物質可分別設定。
+              </p>
+            </div>
           )}
 
           {isContour && (

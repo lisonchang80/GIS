@@ -57,6 +57,7 @@ export interface VectorLayer {
     sourceSubId?: string;
     substances?: Array<{ id: string; name: string }>;
     activeSubstance?: string;
+    substanceStyles?: Record<string, SubstanceStyle>;
     logTransform?: boolean;
     clampNegative?: boolean;
     indicatorThreshold?: number;
@@ -66,6 +67,12 @@ export interface VectorLayer {
     heightLabel?: WaterLevelHeightLabel;
     dateLabel?: WaterLevelDateLabel;
   };
+}
+
+export interface SubstanceStyle {
+  fill?: WaterLevelFill;
+  lines?: WaterLevelLines;
+  arrows?: WaterLevelArrows;
 }
 
 export interface GwConcSubstance {

@@ -33,6 +33,7 @@ function computeContourKey(wl: VectorLayer['waterLevel']): string {
     fill: wl.fill ?? null,
     lines: wl.lines ?? null,
     arrows: wl.arrows ?? null,
+    substanceStyles: wl.substanceStyles ?? null,
     model: wl.model ?? null,
     sourceKind: wl.sourceKind ?? null,
     sourceTabId: wl.sourceTabId ?? null,
@@ -688,9 +689,13 @@ export default function App() {
       {stylePopoverLayerId && (() => {
         const layer = layers.find((l) => l.id === stylePopoverLayerId);
         if (!layer) return null;
+        const sourceLayer = layer.waterLevel?.sourceLayerId
+          ? layers.find((l) => l.id === layer.waterLevel!.sourceLayerId)
+          : undefined;
         return (
           <StylePopover
             layer={layer}
+            sourceLayer={sourceLayer}
             onClose={() => setStylePopoverLayerId(null)}
             onUpdate={(patch) => updateLayer(layer.id, patch)}
           />

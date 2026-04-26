@@ -1,6 +1,8 @@
 import * as turf from '@turf/turf';
 import type { Feature, FeatureCollection, LineString, MultiLineString, Point } from 'geojson';
 import type {
+  GwConcSubstance,
+  SubstanceStyle,
   VectorLayer,
   WaterLevelArrows,
   WaterLevelFill,
@@ -731,7 +733,7 @@ function rebuildContourLayer(target: VectorLayer, source: VectorLayer): VectorLa
       if (typeof sub.monitorConc === 'number') {
         thresholds.push({ value: sub.monitorConc, kind: 'monitor', label: '監測濃度標準' });
       }
-      const subDefaults = makeGwConcDefaultsForSub(sub);
+      const resolved = resolveSubstanceStyle(wl.substanceStyles?.[sub.id], sub, wl.arrows);
       const subOpts: ContourOptions = {
         ...contourOpts,
         indicatorThreshold:
@@ -740,8 +742,8 @@ function rebuildContourLayer(target: VectorLayer, source: VectorLayer): VectorLa
       for (const date of wl.dates) {
         const samples = collectGwConcSamplesForDate(source, wl.sourceTabId!, sub.id, date);
         if (samples.length < 3) continue;
-        const feats = buildContourLayerFeatures(source, date, subDefaults.fill, subDefaults.lines, wl.arrows, {
-          majorInterval: subDefaults.lines?.majorInterval ?? interval,
+        const feats = buildContourLayerFeatures(source, date, resolved.fill, resolved.lines, resolved.arrows, {
+          majorInterval: resolved.lines?.majorInterval ?? interval,
           model: wl.model,
           samples,
           contourOpts: subOpts,
@@ -807,7 +809,20 @@ function rebuildContourLayer(target: VectorLayer, source: VectorLayer): VectorLa
   };
 }
 
-function makeGwConcDefaultsForSub(sub: { controlConc?: number; monitorConc?: number }): {
+export function resolveSubstanceStyle(
+  override: SubstanceStyle | undefined,
+  sub: GwConcSubstance,
+  fallbackArrows?: WaterLevelArrows,
+): { fill: WaterLevelFill | undefined; lines: WaterLevelLines | undefined; arrows: WaterLevelArrows | undefined } {
+  const defaults = makeGwConcDefaultsForSub(sub);
+  return {
+    fill: override?.fill ?? defaults.fill,
+    lines: override?.lines ?? defaults.lines,
+    arrows: override?.arrows ?? fallbackArrows,
+  };
+}
+
+export function makeGwConcDefaultsForSub(sub: { controlConc?: number; monitorConc?: number }): {
   fill: WaterLevelFill | undefined;
   lines: WaterLevelLines | undefined;
 } {

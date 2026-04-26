@@ -12,8 +12,27 @@ import {
   TerraDrawFreehandMode,
 } from 'terra-draw';
 import { TerraDrawMapLibreGLAdapter } from 'terra-draw-maplibre-gl-adapter';
-import type { BaseMapOption, VectorLayer } from './types';
+import type { BaseMapOption, VectorLayer, WaterLevelArrows, WaterLevelFill, WaterLevelLines } from './types';
 import { buildBasemapStyle, basemapTiles } from './basemaps';
+
+function getActiveStyle(layer: VectorLayer): {
+  fill: WaterLevelFill | undefined;
+  lines: WaterLevelLines | undefined;
+  arrows: WaterLevelArrows | undefined;
+} {
+  const wl = layer.waterLevel;
+  if (!wl) return { fill: undefined, lines: undefined, arrows: undefined };
+  const isMultiSub = !!wl.substances && wl.substances.length > 0;
+  if (isMultiSub && wl.activeSubstance) {
+    const override = wl.substanceStyles?.[wl.activeSubstance];
+    return {
+      fill: override?.fill ?? wl.fill,
+      lines: override?.lines ?? wl.lines,
+      arrows: override?.arrows ?? wl.arrows,
+    };
+  }
+  return { fill: wl.fill, lines: wl.lines, arrows: wl.arrows };
+}
 
 interface Props {
   basemap: BaseMapOption;
@@ -338,11 +357,12 @@ function syncLayers(map: MLMap, layers: VectorLayer[]) {
     const labelFilter = wrap(['all', ['has', '名稱'], ['!=', ['get', '名稱'], '']] as unknown as maplibregl.FilterSpecification);
 
     const isContour = !!layer.waterLevel;
+    const activeStyle = getActiveStyle(layer);
     const fillColor = isContour
       ? (['coalesce', ['get', '__color'], 'rgba(0,0,0,0)'] as unknown as maplibregl.ExpressionSpecification)
       : layer.color;
     const fillOpacity = isContour
-      ? (layer.waterLevel?.fill?.opacity ?? 0.6)
+      ? (activeStyle.fill?.opacity ?? 0.6)
       : layer.opacity * 0.45;
 
     if (!map.getLayer(fillId(layer.id))) {
@@ -364,9 +384,9 @@ function syncLayers(map: MLMap, layers: VectorLayer[]) {
       map.setLayoutProperty(fillId(layer.id), 'visibility', visibility);
     }
 
-    const arrowColor = layer.waterLevel?.arrows?.color ?? '#1d4ed8';
-    const arrowWidth = layer.waterLevel?.arrows?.width ?? 1.5;
-    const minorWidthRatio = layer.waterLevel?.lines?.minorWidthRatio ?? 0.5;
+    const arrowColor = activeStyle.arrows?.color ?? '#1d4ed8';
+    const arrowWidth = activeStyle.arrows?.width ?? 1.5;
+    const minorWidthRatio = activeStyle.lines?.minorWidthRatio ?? 0.5;
     const lineWidth = isContour
       ? (['match', ['get', '__line'],
           'minor', strokeW * minorWidthRatio,
@@ -387,9 +407,9 @@ function syncLayers(map: MLMap, layers: VectorLayer[]) {
       if (style === 'dashdot') return [4, 2, 1, 2];
       return [1, 0];
     };
-    const majorDash = dashFor(layer.waterLevel?.lines?.dashStyle);
-    const minorDash = dashFor(layer.waterLevel?.lines?.minorDashStyle);
-    const minorColor = layer.waterLevel?.lines?.minorColor ?? '#9aa3b1';
+    const majorDash = dashFor(activeStyle.lines?.dashStyle);
+    const minorDash = dashFor(activeStyle.lines?.minorDashStyle);
+    const minorColor = activeStyle.lines?.minorColor ?? '#9aa3b1';
     const lineColor = isContour
       ? (['match', ['get', '__line'],
           'minor', minorColor,

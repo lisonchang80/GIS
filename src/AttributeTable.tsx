@@ -1452,19 +1452,6 @@ function GwConcTabPanel({
   const activeSubstance = tab.substances.find((s) => s.id === activeSub);
   const subDates = tab.dates ?? [];
 
-  const writeFeatureGwConc = (
-    updater: (existing: Record<string, Record<string, Record<string, unknown>>>) => Record<string, Record<string, Record<string, unknown>>>,
-  ) => {
-    const newFeatures = layer.data.features.map((f) => {
-      const props = (f.properties ?? {}) as Record<string, unknown>;
-      const cur = (props['__gwConc'] as Record<string, Record<string, Record<string, unknown>>> | undefined) ?? {};
-      const next = updater(cur);
-      return { ...f, properties: { ...props, __gwConc: next } } as Feature;
-    });
-    const data: FeatureCollection = { ...layer.data, features: newFeatures };
-    onUpdateLayer(layer.id, { data });
-  };
-
   const handleAddDate = () => {
     const d = newDate.trim();
     if (!d) return;
@@ -1983,7 +1970,6 @@ function GwConcTabPanel({
               onDragEnd={() => {
                 setDraggingSubId(null);
                 setDragOverSubId(null);
-                setDragOverTrash(false);
               }}
               onDragOver={(e) => {
                 if (!draggingSubId || draggingSubId === s.id) return;

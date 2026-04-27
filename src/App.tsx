@@ -8,6 +8,8 @@ import { DrawToolbar, type DrawMode } from './DrawToolbar';
 import { ProjectBar } from './ProjectBar';
 import { AttributeTable } from './AttributeTable';
 import { StylePopover } from './StylePopover';
+import { GeoOpsToolbar } from './GeoOpsToolbar';
+import { bufferLayer, fcToLayer, type BufferUnits } from './geoOps';
 import { searchLand, type LandQueryParams } from './landQuery';
 import { BASEMAPS, basemapDefaultVersionIndex } from './basemaps';
 import type { BaseMapId, VectorLayer } from './types';
@@ -489,6 +491,43 @@ export default function App() {
     }
   };
 
+  const runGeoOp = useCallback(
+    (
+      sourceId: string,
+      run: (layer: VectorLayer) => FeatureCollection,
+      nameSuffix: string,
+    ): string | null => {
+      const source = layers.find((l) => l.id === sourceId);
+      if (!source) return '找不到來源圖層';
+      try {
+        const fc = run(source);
+        const color = PALETTE[colorCursor.current % PALETTE.length];
+        colorCursor.current += 1;
+        const newLayer = fcToLayer(fc, `${source.name} ${nameSuffix}`, color);
+        setLayers((prev) => [newLayer, ...prev]);
+        const b = geometryBounds(newLayer.data);
+        if (b && mapRef.current) {
+          mapRef.current.fitBounds(
+            [[b[0], b[1]], [b[2], b[3]]],
+            { padding: 60, duration: 700 },
+          );
+        }
+        return null;
+      } catch (e) {
+        return (e as Error).message;
+      }
+    },
+    [layers],
+  );
+
+  const handleBuffer = useCallback(
+    (sourceId: string, distance: number, units: BufferUnits): string | null => {
+      const unitLabel = units === 'meters' ? 'm' : 'km';
+      return runGeoOp(sourceId, (l) => bufferLayer(l, distance, units), `緩衝 ${distance}${unitLabel}`);
+    },
+    [runGeoOp],
+  );
+
   const handleStartPickCoords = useCallback((featureIndex: number) => {
     if (!attributesLayerId) return;
     setDrawMode('static');
@@ -647,6 +686,10 @@ export default function App() {
           onExport={handleExportDraw}
           onAddPointByCoords={handleAddPointByCoords}
           onAddPolygonByLandNo={handleAddPolygonByLandNo}
+        />
+        <GeoOpsToolbar
+          layers={layers}
+          onBuffer={handleBuffer}
         />
       </LayerPanel>
       <main className="map-area">

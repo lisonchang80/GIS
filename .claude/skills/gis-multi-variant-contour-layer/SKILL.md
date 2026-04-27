@@ -1,6 +1,6 @@
 ---
 name: gis-multi-variant-contour-layer
-description: Build a single contour layer that holds multiple variants (e.g. multi-pollutant for groundwater) with active-variant switching via map filter, not rebuild. Use when the user wants "all X × all dates → one combined layer" instead of N separate layers, with row of variant buttons in the layer panel. Pattern is generalizable to soil/gas concentration tabs, multi-parameter wells, etc.
+description: Build a single contour layer that holds multiple variants (e.g. multi-pollutant for groundwater) with active-variant switching via map filter, not rebuild. Use when the user wants "all X × all dates → one combined layer" instead of N separate layers, with row of variant buttons in the layer panel. Pattern is generalizable to soil/gas concentration tabs, multi-parameter wells, etc. Optional Step 9 covers per-variant style overrides (substanceStyles[id]) for when variants need independent fill bands / lines / arrows due to disparate value ranges (e.g. concentrations spanning orders of magnitude).
 ---
 
 # 多變數合併 contour 圖層
@@ -199,6 +199,101 @@ const setActiveDate = (date: string) => {
 
 `activeDate` 同理 — 既有實作就排除，照抄。
 
+## Step 9 — 物質內樣式覆寫（選做，但多變數類型強烈建議）
+
+預設情況下 `wl.fill / wl.lines / wl.arrows` 是整層共用。但 variant 間閾值跨數量級時（例：苯 controlConc=0.5 mg/L、TCE=5 mg/L），共用同一組 fill bands 會讓某些 variant 失真。讓**每個 variant 可獨立設定 fill / lines / arrows**：
+
+### 9.1 types — `substanceStyles` 欄位
+
+`src/types.ts`：
+```ts
+waterLevel?: {
+  // 既有欄位 ...
+  substanceStyles?: Record<string, SubstanceStyle>;  // key = sub id
+};
+
+export interface SubstanceStyle {
+  fill?: WaterLevelFill;
+  lines?: WaterLevelLines;
+  arrows?: WaterLevelArrows;
+}
+```
+
+### 9.2 contour.ts — `resolveSubstanceStyle` helper
+
+```ts
+export function resolveSubstanceStyle(
+  override: SubstanceStyle | undefined,
+  sub: <SubstanceType>,
+  fallbackArrows?: WaterLevelArrows,
+): { fill, lines, arrows } {
+  const defaults = makeXxxDefaultsForSub(sub);  // Step 4 既有 helper，須 export 出去
+  return {
+    fill: override?.fill ?? defaults.fill,
+    lines: override?.lines ?? defaults.lines,
+    arrows: override?.arrows ?? fallbackArrows,
+  };
+}
+```
+
+把 Step 4 multi-sub 分支裡 `subDefaults = makeXxxDefaultsForSub(sub)` 改成 `resolveSubstanceStyle(wl.substanceStyles?.[sub.id], sub, wl.arrows)`。
+
+### 9.3 MapView — active variant 解析 paint props
+
+```ts
+function getActiveStyle(layer: VectorLayer) {
+  const wl = layer.waterLevel;
+  if (!wl) return { fill: undefined, lines: undefined, arrows: undefined };
+  const isMultiSub = !!wl.substances && wl.substances.length > 0;
+  if (isMultiSub && wl.activeSubstance) {
+    const override = wl.substanceStyles?.[wl.activeSubstance];
+    return {
+      fill: override?.fill ?? wl.fill,
+      lines: override?.lines ?? wl.lines,
+      arrows: override?.arrows ?? wl.arrows,
+    };
+  }
+  return { fill: wl.fill, lines: wl.lines, arrows: wl.arrows };
+}
+```
+
+paint property（fill opacity、line dash、arrow color、minor color 等）全改從 `getActiveStyle(layer).xxx` 取。
+
+### 9.4 StylePopover — 讀寫路由 + 重設按鈕
+
+- 多接 `sourceLayer?: VectorLayer` prop（從 source 拿 sub 元資訊算 defaults）
+- multi-variant 模式：
+  - **讀**：`subOverride?.fill ?? subDefaults.fill ?? { mode: 'none' }`，lines/arrows 同理
+  - **寫**：更新到 `substanceStyles[activeSubId]`，不要碰 `wl.fill / wl.lines / wl.arrows`
+  - 加「當前物質 X / 重設預設」banner（重設鈕在無 override 時 disabled）
+
+App.tsx render StylePopover 時順手 lookup：
+```tsx
+const sourceLayer = layer.waterLevel?.sourceLayerId
+  ? layers.find((l) => l.id === layer.waterLevel!.sourceLayerId)
+  : undefined;
+```
+
+### 9.5 computeContourKey 納入 substanceStyles
+
+```ts
+return JSON.stringify({
+  fill: wl.fill ?? null,
+  lines: wl.lines ?? null,
+  arrows: wl.arrows ?? null,
+  substanceStyles: wl.substanceStyles ?? null,  // 新增
+  // ... 其他既有
+});
+```
+
+漏掉的話改 fill bands 不會觸發 rebuild — bug 會偽裝成「設定無效」很難 debug。
+
+### 9.6 行為注意
+
+- 切換 active variant 仍不重建（filter 變化），跟 Step 8 一致
+- 但**改 substanceStyles 必須 rebuild**：fill bands 的顏色已 baked 到 feature `__color` property
+- 「重設預設」清掉 entry 後，rebuild 走 fallback 到 `makeXxxDefaultsForSub`，使用該 variant 當下的 controlConc/monitorConc 推算
+
 ## 不要做的事
 
 - **不要**為每個變數建獨立圖層後再硬塞回一個 `Map<id, Layer>` — 直接走合併 features + filter 才能享受 maplibre 的硬體加速切換
@@ -206,3 +301,6 @@ const setActiveDate = (date: string) => {
 - **不要**忘了 source 圖層的設定變動（如 controlConc）需要觸發 contour re-sync。在 `App.tsx` 的 `updateLayer` 把 `'<configField>' in patch` 也加進 `syncContoursForSource` 觸發條件
 - **不要**讓 `setActiveSubstance` 改 layer name；切變數對 panel 顯示應該無影響（除了 active 高亮）
 - **不要**在 MapView filter 串接時忘了 `subFilter` null 時的 fallback 路徑（單變數圖層沒有 activeSubstance）
+- **不要**讓 `wl.fill` / `wl.lines` 成為 multi-variant 圖層的「主要儲存」— 應該用 `substanceStyles[id]` 做 per-variant；`wl.fill` 在 multi-variant 模式只剩「無覆寫時的 fallback」角色
+- **不要**把 `makeXxxDefaultsForSub` 留在 contour.ts 內部 — Step 9.2 須 export，因為 StylePopover (Step 9.4) 也要用它算 default fill bands
+- **不要**忘記 StylePopover 在 multi-variant 模式下需要拿到 source layer（Step 9.4 的 `sourceLayer` prop）— 沒有它就讀不到 monitorConc / controlConc，無法算 fallback fill bands

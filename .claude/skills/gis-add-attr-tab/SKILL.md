@@ -164,6 +164,14 @@ CSS：`.dock-tab-trash { margin-left: auto; ... }` + `.dock-tab-trash.active { c
 
 如果新分頁需要在 LayerItem 上有特殊 UI（例如顯示當前選中的物質、切換採樣場次），仿 `setActiveDate` / `setModel` 加 callback。
 
+## Step 6.5 — Threshold 視覺高亮（可選，建議）
+
+若新分頁的資料含 `controlConc` / `monitorConc` 雙門檻（gw-conc / 土壤 / 土壤氣體 都會），cell 與相關 UI 元件套 alert/warn 高亮 → 走 `gis-threshold-highlight` skill。摘要：
+
+- Cell：`gw-conc-cell-alert` / `gw-conc-cell-warn` class
+- LayerItem 物質按鈕：`.water-level-sub-btn.alert` / `.warn`，會隨 `wl.activeDate` 自動重算
+- 顏色固定：紅 `rgba(239, 68, 68, X)` / 橘 `rgba(249, 115, 22, X)`
+
 ## Step 7 — 更新 project memory
 
 寫完後在 `C:\Users\hao80\.claude\projects\D--Claude-code\memory\gis_project_status.md` 把該分頁從「未完成」搬到「已完成」，順手記錄資料形狀與重要設計決策。

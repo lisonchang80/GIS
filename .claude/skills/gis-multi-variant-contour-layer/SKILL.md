@@ -168,6 +168,8 @@ CSS 設 `flex-wrap: wrap` 讓按鈕多時自動換行：
 }
 ```
 
+**Threshold 高亮（隨 activeDate 變動）**：若 source 是 gw-conc（或任何含 controlConc/monitorConc 的監測 tab），按鈕應反映「該日期下任一點是否超標」→ 走 `gis-threshold-highlight` skill Step 2。需 LayerPanel 傳 `allLayers` 進 LayerItem，computed status map 套 `.alert` / `.warn` class，active + 狀態雙存時 threshold 色當主背景、藍色 inset shadow 表示選中。
+
 ## Step 6 — `LayerIcon` 變體
 
 LayerIcon 用 inner-circle 數量區分 0 / 單變數複日 / 多變數合併：

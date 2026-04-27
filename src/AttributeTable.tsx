@@ -1403,7 +1403,7 @@ function GwConcTabPanel({
   const [dateEditing, setDateEditing] = useState<{ date: string; value: string } | null>(null);
   const [contourModel, setContourModel] = useState<'idw' | 'tin' | 'kriging' | 'indicator'>('idw');
   const [logTransform, setLogTransform] = useState(false);
-  const [clampNegative, setClampNegative] = useState(false);
+  const [clampNegative, setClampNegative] = useState(true);
   const reportFileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {

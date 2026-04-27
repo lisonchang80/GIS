@@ -1654,6 +1654,34 @@ body,
   row-gap: 4px;
 }
 
+.water-level-flags-row {
+  flex-wrap: wrap;
+  row-gap: 4px;
+  border-top: none;
+  padding-top: 2px;
+  margin-top: 0;
+}
+
+.water-level-flags-row.water-level-flags-display {
+  border-top: 1px dashed var(--border);
+  padding-top: 6px;
+  margin-top: 4px;
+}
+
+.water-level-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.water-level-flag input[type="checkbox"] {
+  margin: 0;
+}
+
 .water-level-sub-btn.active {
   background: rgba(59, 130, 246, 0.3);
   border-color: rgba(59, 130, 246, 0.6);
@@ -1866,5 +1894,118 @@ body,
 }
 
 .layers-header .btn.xs.primary {
+  flex-shrink: 0;
+}
+
+.legend-overlay {
+  position: absolute;
+  right: 12px;
+  bottom: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+  pointer-events: none;
+  z-index: 5;
+  max-height: calc(100% - 64px);
+  overflow-y: auto;
+}
+
+.legend-card {
+  pointer-events: auto;
+  background: rgba(20, 24, 32, 0.92);
+  color: #f1f5f9;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  padding: 8px 10px;
+  width: 220px;
+  font-size: 12px;
+  line-height: 1.35;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(2px);
+}
+
+.legend-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.legend-card-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.legend-card-unit {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.legend-bands {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 6px;
+}
+
+.legend-band-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-swatch {
+  width: 18px;
+  height: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.legend-band-label {
+  flex: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.legend-thresholds {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 4px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.legend-threshold-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-threshold-line {
+  flex-shrink: 0;
+}
+
+.legend-threshold-label {
+  flex: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.legend-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 11px;
+  color: #94a3b8;
+  font-variant-numeric: tabular-nums;
+}
+
+.legend-main-line {
+  margin-left: auto;
   flex-shrink: 0;
 }

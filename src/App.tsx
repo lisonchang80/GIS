@@ -8,6 +8,7 @@ import { DrawToolbar, type DrawMode } from './DrawToolbar';
 import { ProjectBar } from './ProjectBar';
 import { AttributeTable } from './AttributeTable';
 import { StylePopover } from './StylePopover';
+import { Legend } from './Legend';
 import { GeoOpsToolbar } from './GeoOpsToolbar';
 import { bufferLayer, fcToLayer, type BufferUnits } from './geoOps';
 import { searchLand, type LandQueryParams } from './landQuery';
@@ -704,6 +705,7 @@ export default function App() {
           onPick={handleMapPick}
           onDateLabelMove={handleDateLabelMove}
         />
+        <Legend layers={layers} />
         {error && (
           <div className="toast error" onClick={() => setError(null)}>
             {error}

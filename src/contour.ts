@@ -500,6 +500,18 @@ function buildOutlineFeature(samples: IDWSample[], date: string): Feature | null
   };
 }
 
+export function decimalsOf(n: number): number {
+  if (!Number.isFinite(n) || n === 0) return 2;
+  const s = Math.abs(n).toString();
+  if (s.includes('e')) {
+    const [mantissa, exp] = s.split('e');
+    const e = parseInt(exp, 10);
+    const decimalsInMantissa = (mantissa.split('.')[1] ?? '').length;
+    return Math.max(0, decimalsInMantissa - e);
+  }
+  return (s.split('.')[1] ?? '').length;
+}
+
 export function buildContourFeaturesForLayer(
   sourceLayer: VectorLayer,
   date: string,
@@ -508,6 +520,7 @@ export function buildContourFeaturesForLayer(
   contourOpts: ContourOptions = {},
   samplesOverride?: IDWSample[],
   thresholds?: ThresholdLine[],
+  labelPrecision?: number,
 ): Feature[] {
   const samples = samplesOverride ?? collectSamplesForDate(sourceLayer, date);
   if (samples.length < 3) return [];
@@ -518,6 +531,7 @@ export function buildContourFeaturesForLayer(
   if (zMax - zMin < 1e-9) return [];
 
   const out: Feature[] = [];
+  const precision = labelPrecision ?? 2;
 
   const majorBreaks = computeMajorBreaks(zMin, zMax, cfg.majorInterval);
   if (majorBreaks.length > 0) {
@@ -531,7 +545,7 @@ export function buildContourFeaturesForLayer(
           __date: date,
           __kind: 'iso',
           __line: 'major',
-          名稱: z !== null ? z.toFixed(2) : '',
+          名稱: z !== null ? z.toFixed(precision) : '',
         },
       });
     }
@@ -667,7 +681,7 @@ export function buildContourLayerFeatures(
   fill?: WaterLevelFill,
   lines?: WaterLevelLines,
   arrows?: WaterLevelArrows,
-  options: { plan?: BandPlan; majorInterval?: number; model?: ContourModel; samples?: IDWSample[]; contourOpts?: ContourOptions; thresholds?: ThresholdLine[] } = {},
+  options: { plan?: BandPlan; majorInterval?: number; model?: ContourModel; samples?: IDWSample[]; contourOpts?: ContourOptions; thresholds?: ThresholdLine[]; labelPrecision?: number } = {},
 ): Feature[] {
   const interval = options.majorInterval ?? lines?.majorInterval ?? DEFAULT_LINES.majorInterval;
   const arrowsCfg: Required<WaterLevelArrows> = { ...DEFAULT_ARROWS, ...(arrows ?? {}) };
@@ -679,7 +693,7 @@ export function buildContourLayerFeatures(
       samples: options.samples,
       contourOpts: options.contourOpts,
     }),
-    ...buildContourFeaturesForLayer(sourceLayer, date, lines, options.model, options.contourOpts ?? {}, options.samples, options.thresholds),
+    ...buildContourFeaturesForLayer(sourceLayer, date, lines, options.model, options.contourOpts ?? {}, options.samples, options.thresholds, options.labelPrecision),
     ...(arrowsCfg.enabled
       ? buildFlowArrowsForLayer(sourceLayer, date, {
           gridCells: arrowsCfg.divisions,
@@ -719,6 +733,8 @@ function rebuildContourLayer(target: VectorLayer, source: VectorLayer): VectorLa
   };
   const isMultiSub = wl.sourceKind === 'gw-conc' && !!wl.sourceTabId && !!wl.substances && wl.substances.length > 0;
   const isSingleGwConc = wl.sourceKind === 'gw-conc' && !!wl.sourceTabId && !!wl.sourceSubId && !isMultiSub;
+  const effectiveArrows: WaterLevelArrows | undefined =
+    wl.sourceKind === 'gw-conc' ? (wl.arrows ?? { enabled: false }) : wl.arrows;
 
   if (isMultiSub) {
     const tab = source.gwConcTabs?.find((t) => t.id === wl.sourceTabId);
@@ -733,12 +749,15 @@ function rebuildContourLayer(target: VectorLayer, source: VectorLayer): VectorLa
       if (typeof sub.monitorConc === 'number') {
         thresholds.push({ value: sub.monitorConc, kind: 'monitor', label: '監測濃度標準' });
       }
-      const resolved = resolveSubstanceStyle(wl.substanceStyles?.[sub.id], sub, wl.arrows);
+      const resolved = resolveSubstanceStyle(wl.substanceStyles?.[sub.id], sub, effectiveArrows);
       const subOpts: ContourOptions = {
         ...contourOpts,
         indicatorThreshold:
           wl.model === 'indicator' ? sub.controlConc : contourOpts.indicatorThreshold,
       };
+      const subPrecision = typeof sub.monitorConc === 'number'
+        ? decimalsOf(sub.monitorConc)
+        : undefined;
       for (const date of wl.dates) {
         const samples = collectGwConcSamplesForDate(source, wl.sourceTabId!, sub.id, date);
         if (samples.length < 3) continue;
@@ -748,6 +767,7 @@ function rebuildContourLayer(target: VectorLayer, source: VectorLayer): VectorLa
           samples,
           contourOpts: subOpts,
           thresholds,
+          labelPrecision: subPrecision,
         });
         for (const f of feats) {
           allFeats.push({
@@ -769,6 +789,7 @@ function rebuildContourLayer(target: VectorLayer, source: VectorLayer): VectorLa
   }
 
   let thresholds: ThresholdLine[] | undefined;
+  let singlePrecision: number | undefined;
   if (isSingleGwConc) {
     const tab = source.gwConcTabs?.find((t) => t.id === wl.sourceTabId);
     const sub = tab?.substances.find((s) => s.id === wl.sourceSubId);
@@ -779,6 +800,9 @@ function rebuildContourLayer(target: VectorLayer, source: VectorLayer): VectorLa
       }
       if (typeof sub.monitorConc === 'number') {
         thresholds.push({ value: sub.monitorConc, kind: 'monitor', label: '監測濃度標準' });
+      }
+      if (typeof sub.monitorConc === 'number') {
+        singlePrecision = decimalsOf(sub.monitorConc);
       }
     }
   }
@@ -792,13 +816,14 @@ function rebuildContourLayer(target: VectorLayer, source: VectorLayer): VectorLa
     const samples = isSingleGwConc
       ? collectGwConcSamplesForDate(source, wl.sourceTabId!, wl.sourceSubId!, date)
       : undefined;
-    const feats = buildContourLayerFeatures(source, date, wl.fill, wl.lines, wl.arrows, {
+    const feats = buildContourLayerFeatures(source, date, wl.fill, wl.lines, effectiveArrows, {
       plan: plan ?? undefined,
       majorInterval: interval,
       model: wl.model,
       samples,
       contourOpts,
       thresholds,
+      labelPrecision: singlePrecision,
     });
     allFeats.push(...feats);
   }
@@ -819,6 +844,96 @@ export function resolveSubstanceStyle(
     fill: override?.fill ?? defaults.fill,
     lines: override?.lines ?? defaults.lines,
     arrows: override?.arrows ?? fallbackArrows,
+  };
+}
+
+export interface LegendBand {
+  from: number;
+  to: number;
+  color: string;
+  label: string;
+}
+
+export interface LegendThreshold {
+  value: number;
+  color: string;
+  label: string;
+}
+
+export interface LegendModel {
+  bands: LegendBand[];
+  thresholds: LegendThreshold[];
+  mainColor: string;
+  step?: number;
+}
+
+function formatNum(n: number): string {
+  if (!Number.isFinite(n)) return '∞';
+  const abs = Math.abs(n);
+  if (abs === 0) return '0';
+  if (abs >= 1e5 || abs < 1e-3) return n.toExponential(2);
+  if (abs >= 100) return n.toFixed(0);
+  if (abs >= 1) return n.toFixed(2);
+  return n.toPrecision(3);
+}
+
+const LEGEND_MAX = 1e9;
+
+function isWhite(color: string): boolean {
+  const c = color.trim().toLowerCase();
+  return c === '#ffffff' || c === '#fff' || c === 'white' || c === 'rgb(255,255,255)';
+}
+
+export function getLegendModel(
+  sub: GwConcSubstance,
+  fill: WaterLevelFill | undefined,
+  lines: WaterLevelLines | undefined,
+  strokeColor: string,
+  precision?: number,
+): LegendModel {
+  const fmt = (n: number): string =>
+    typeof precision === 'number' ? n.toFixed(precision) : formatNum(n);
+
+  const bands: LegendBand[] = [];
+  if (fill?.mode === 'custom' && fill.bands && fill.bands.length > 0) {
+    const visible = fill.bands.filter((b) => !isWhite(b.color));
+    visible.forEach((b, i) => {
+      let label: string;
+      if (b.to >= LEGEND_MAX) {
+        label = `> ${fmt(b.from)}`;
+      } else if (i === 0) {
+        label = `< ${fmt(b.to)}`;
+      } else {
+        label = `${fmt(b.from)} – ${fmt(b.to)}`;
+      }
+      bands.push({ from: b.from, to: b.to, color: b.color, label });
+    });
+  } else if (fill?.mode === 'gradient' && fill.gradient) {
+    bands.push({ from: 0, to: 1, color: fill.gradient.from, label: '低' });
+    bands.push({ from: 0, to: 1, color: fill.gradient.to, label: '高' });
+  }
+
+  const thresholds: LegendThreshold[] = [];
+  if (typeof sub.controlConc === 'number') {
+    thresholds.push({
+      value: sub.controlConc,
+      color: '#ef4444',
+      label: `管制濃度標準 ${fmt(sub.controlConc)}`,
+    });
+  }
+  if (typeof sub.monitorConc === 'number') {
+    thresholds.push({
+      value: sub.monitorConc,
+      color: '#f97316',
+      label: `監測濃度標準 ${fmt(sub.monitorConc)}`,
+    });
+  }
+
+  return {
+    bands,
+    thresholds,
+    mainColor: strokeColor,
+    step: lines?.majorInterval,
   };
 }
 

@@ -528,7 +528,7 @@ function syncLayers(map: MLMap, layers: VectorLayer[]) {
   }
 }
 
-function bboxCenter(layer: VectorLayer): [number, number] | null {
+function bboxRightBottom(layer: VectorLayer): [number, number] | null {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   const visit = (coords: unknown): void => {
     if (!Array.isArray(coords)) return;
@@ -548,7 +548,9 @@ function bboxCenter(layer: VectorLayer): [number, number] | null {
     visit((f.geometry as { coordinates?: unknown }).coordinates);
   }
   if (!Number.isFinite(minX)) return null;
-  return [(minX + maxX) / 2, (minY + maxY) / 2];
+  const padX = (maxX - minX) * 0.04;
+  const padY = (maxY - minY) * 0.04;
+  return [maxX - padX, minY + padY];
 }
 
 function syncDateMarkers(
@@ -565,7 +567,7 @@ function syncDateMarkers(
     if (typeof dl.lng === 'number' && typeof dl.lat === 'number') {
       pos = [dl.lng, dl.lat];
     } else {
-      pos = bboxCenter(layer);
+      pos = bboxRightBottom(layer);
     }
     if (!pos) continue;
 

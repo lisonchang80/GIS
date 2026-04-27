@@ -66,7 +66,12 @@ export interface VectorLayer {
     arrows?: WaterLevelArrows;
     heightLabel?: WaterLevelHeightLabel;
     dateLabel?: WaterLevelDateLabel;
+    legend?: WaterLevelLegend;
   };
+}
+
+export interface WaterLevelLegend {
+  visible?: boolean;
 }
 
 export interface SubstanceStyle {

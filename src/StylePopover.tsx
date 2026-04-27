@@ -389,26 +389,40 @@ export function StylePopover({ layer, sourceLayer, onClose, onUpdate }: Props) {
 
           {showTextSection && (
             <div className="popover-section">
-              <div className="popover-section-title">文字</div>
+              <div className="popover-section-title">{isContour ? '日期文字樣式' : '文字'}</div>
 
-              <div className="popover-row">
-                <label className="popover-label">
+              {!isContour && (
+                <div className="popover-row">
+                  <label className="popover-label">
+                    <input
+                      type="checkbox"
+                      checked={textOn}
+                      onChange={(e) => setTextVisible(e.target.checked)}
+                      style={{ marginRight: 6 }}
+                    />
+                    顯示
+                  </label>
                   <input
-                    type="checkbox"
-                    checked={textOn}
-                    onChange={(e) => setTextVisible(e.target.checked)}
-                    style={{ marginRight: 6 }}
+                    type="color"
+                    value={labelColor}
+                    onChange={(e) => onUpdate({ labelColor: e.target.value })}
+                    className="color-swatch wide"
+                    disabled={!textOn}
                   />
-                  {isContour ? '日期' : '顯示'}
-                </label>
-                <input
-                  type="color"
-                  value={labelColor}
-                  onChange={(e) => onUpdate({ labelColor: e.target.value })}
-                  className="color-swatch wide"
-                  disabled={!textOn}
-                />
-              </div>
+                </div>
+              )}
+
+              {isContour && (
+                <div className="popover-row">
+                  <label className="popover-label">顏色</label>
+                  <input
+                    type="color"
+                    value={labelColor}
+                    onChange={(e) => onUpdate({ labelColor: e.target.value })}
+                    className="color-swatch wide"
+                  />
+                </div>
+              )}
 
               <div className="popover-row">
                 <label className="popover-label">外框</label>
@@ -417,7 +431,7 @@ export function StylePopover({ layer, sourceLayer, onClose, onUpdate }: Props) {
                   value={labelHaloColor}
                   onChange={(e) => onUpdate({ labelHaloColor: e.target.value })}
                   className="color-swatch wide"
-                  disabled={!textOn}
+                  disabled={!isContour && !textOn}
                 />
               </div>
 
@@ -431,14 +445,14 @@ export function StylePopover({ layer, sourceLayer, onClose, onUpdate }: Props) {
                   value={labelSize}
                   onChange={(e) => onUpdate({ labelSize: parseFloat(e.target.value) })}
                   className="slider"
-                  disabled={!textOn}
+                  disabled={!isContour && !textOn}
                 />
                 <span className="popover-value">{labelSize}px</span>
               </div>
 
               {isContour && textOn && (
                 <p className="hint" style={{ margin: '-2px 0 0' }}>
-                  地圖上拖曳「日期」可調整位置
+                  地圖上拖曳「日期」可調整位置；可在圖層展開列勾選「日期」顯示
                 </p>
               )}
             </div>
@@ -468,6 +482,32 @@ export function StylePopover({ layer, sourceLayer, onClose, onUpdate }: Props) {
               <p className="hint" style={{ margin: '-2px 0 0' }}>
                 以下樣式僅套用於目前物質；切換物質可分別設定。
               </p>
+            </div>
+          )}
+
+          {isMultiSub && wl && (
+            <div className="popover-section">
+              <div className="popover-section-title">圖例</div>
+              <div className="popover-row">
+                <label className="popover-label">
+                  <input
+                    type="checkbox"
+                    checked={wl.legend?.visible !== false}
+                    onChange={(e) =>
+                      onUpdate({
+                        waterLevel: {
+                          ...wl,
+                          legend: { ...(wl.legend ?? {}), visible: e.target.checked },
+                        },
+                      })
+                    }
+                    style={{ marginRight: 6 }}
+                  />
+                  顯示於地圖右下
+                </label>
+                <span />
+                <span />
+              </div>
             </div>
           )}
 

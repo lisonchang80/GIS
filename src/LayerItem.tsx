@@ -205,6 +205,54 @@ export function LayerItem(p: Props) {
               ) : null}
             </select>
           </div>
+          {wl.sourceKind === 'gw-conc' && (
+            <div className="water-level-row water-level-flags-row">
+              <label className="water-level-flag">
+                <input
+                  type="checkbox"
+                  checked={!!wl.logTransform}
+                  onChange={(e) => p.onUpdate({ waterLevel: { ...wl, logTransform: e.target.checked } })}
+                />
+                log-transform
+              </label>
+              <label className="water-level-flag">
+                <input
+                  type="checkbox"
+                  checked={wl.clampNegative ?? true}
+                  onChange={(e) => p.onUpdate({ waterLevel: { ...wl, clampNegative: e.target.checked } })}
+                />
+                負值歸 0
+              </label>
+            </div>
+          )}
+          <div className="water-level-row water-level-flags-row water-level-flags-display">
+            {isMultiSub && (
+              <label className="water-level-flag">
+                <input
+                  type="checkbox"
+                  checked={wl.legend?.visible !== false}
+                  onChange={(e) =>
+                    p.onUpdate({
+                      waterLevel: { ...wl, legend: { ...(wl.legend ?? {}), visible: e.target.checked } },
+                    })
+                  }
+                />
+                圖例
+              </label>
+            )}
+            <label className="water-level-flag">
+              <input
+                type="checkbox"
+                checked={wl.dateLabel?.visible !== false}
+                onChange={(e) =>
+                  p.onUpdate({
+                    waterLevel: { ...wl, dateLabel: { ...(wl.dateLabel ?? {}), visible: e.target.checked } },
+                  })
+                }
+              />
+              日期
+            </label>
+          </div>
         </>
       )}
     </li>

@@ -1,6 +1,6 @@
 ---
 name: gis-multi-variant-contour-layer
-description: Build a single contour layer that holds multiple variants (e.g. multi-pollutant for groundwater) with active-variant switching via map filter, not rebuild. Use when the user wants "all X × all dates → one combined layer" instead of N separate layers, with row of variant buttons in the layer panel. Pattern is generalizable to soil/gas concentration tabs, multi-parameter wells, etc. Optional Step 9 covers per-variant style overrides (substanceStyles[id]) for when variants need independent fill bands / lines / arrows due to disparate value ranges (e.g. concentrations spanning orders of magnitude).
+description: Build a single contour layer that holds multiple variants (e.g. multi-pollutant for groundwater) with active-variant switching via map filter, not rebuild. Use when the user wants "all X × all dates → one combined layer" instead of N separate layers, with row of variant buttons in the layer panel. Pattern is generalizable to soil/gas concentration tabs, multi-parameter wells, etc. Optional Step 9 covers per-variant style overrides (substanceStyles[id]) for when variants need independent fill bands / lines / arrows due to disparate value ranges (e.g. concentrations spanning orders of magnitude). Optional Step 10 covers variant legend overlay (Legend.tsx + getLegendModel), labelPrecision threading from monitorConc, default arrows-off normalization, and date marker default placement.
 ---
 
 # 多變數合併 contour 圖層
@@ -294,6 +294,94 @@ return JSON.stringify({
 - 但**改 substanceStyles 必須 rebuild**：fill bands 的顏色已 baked 到 feature `__color` property
 - 「重設預設」清掉 entry 後，rebuild 走 fallback 到 `makeXxxDefaultsForSub`，使用該 variant 當下的 controlConc/monitorConc 推算
 
+## Step 10（選用）— 變數 legend overlay
+
+當 fill bands 因 variant 而異（看過 Step 9 的場景），純色塊不告訴使用者每個顏色對應的數值範圍 → 加 legend 卡片浮在地圖右下。
+
+### 10.1 純函式抽出 legend model
+
+`contour.ts`：
+```ts
+export interface LegendBand { from: number; to: number; color: string; label: string; }
+export interface LegendThreshold { value: number; color: string; label: string; }
+export interface LegendModel { bands: LegendBand[]; thresholds: LegendThreshold[]; mainColor: string; step?: number; }
+
+export function getLegendModel(
+  variant: { controlConc?: number; monitorConc?: number },
+  fill: WaterLevelFill | undefined,
+  lines: WaterLevelLines | undefined,
+  strokeColor: string,
+  precision?: number,
+): LegendModel { /* ... */ }
+```
+
+關鍵細節：
+- **過濾白色 band**：典型 default fill 第一格是 `{ from: 0, to: ε, color: '#ffffff' }` 純為「< 偵測極限」墊段；legend 不顯示，直接 `.filter(b => !isWhite(b.color))`
+- **首格用 `< X`**：白色濾掉後第一個有色 band 的 `from` 通常很小（M/2），與其顯示 `0.00125 - 0.0050` 不如直接顯示 `< 0.0050`
+- **末格用 `> X`**：fill 末格典型為 `{ from: C, to: 1e9, color: 'red' }`；用 LEGEND_MAX = 1e9 sentinel 偵測
+- **precision 統一**：傳入 precision 則 band/threshold 數字一律 `.toFixed(precision)`，否則 fallback `formatNum`（adaptive，含科學記號）
+- **threshold 顏色固定**：紅 `#ef4444` (control) + 橘 `#f97316` (monitor)，跟 MapView 的 threshold line color match
+
+### 10.2 Legend.tsx 元件
+
+新檔 `src/Legend.tsx`：filter 出 multi-variant contour 圖層（visible & legend.visible !== false），各渲染一張 card 在 `.legend-overlay` 內。
+
+CSS 重點：
+- `.legend-overlay` 浮動 right/bottom，`pointer-events: none`，z-index 5，`max-height: calc(100% - 64px) + overflow-y: auto`
+- `.legend-card` 必須 `pointer-events: auto`（不然點不到）；深色半透明 + backdrop-filter blur
+- 多卡片直向堆疊（多個 multi-variant 圖層同時開）
+
+### 10.3 toggle 控制位置：放 LayerItem 不放 StylePopover
+
+理由：
+- 高頻操作（切換 legend 顯隱比改顏色頻繁）
+- StylePopover 開啟需要兩步（點 icon → popover），LayerItem 展開只一步（點 ▸）
+- legend 是「圖層的展示組件」概念上屬於圖層而非樣式
+
+LayerItem 加 `.water-level-flags-row.water-level-flags-display`（與上面 log-transform/clamp-negative 那行用虛線分隔）：圖例 checkbox + 日期 checkbox（順手把 dateLabel.visible 一起搬過來，讓 StylePopover 只剩字色/外框/字級）。
+
+`wl.legend?.visible !== false` 判斷 — undefined 視為 true（預設顯示）。
+
+### 10.4 precision 從 monitorConc 自動推
+
+當資料有自然精度（如 `monitorConc = 0.0025` 暗示 4 位小數），主線 z label 與 legend 數字應該一致：
+
+```ts
+export function decimalsOf(n: number): number {
+  if (!Number.isFinite(n) || n === 0) return 2;
+  const s = Math.abs(n).toString();
+  if (s.includes('e')) {
+    const [mantissa, exp] = s.split('e');
+    return Math.max(0, ((mantissa.split('.')[1] ?? '').length) - parseInt(exp, 10));
+  }
+  return (s.split('.')[1] ?? '').length;
+}
+```
+
+threading：
+- `buildContourFeaturesForLayer` / `buildContourLayerFeatures` 加 `labelPrecision?: number` option，套到 `z.toFixed(labelPrecision ?? 2)`
+- `rebuildContourLayer` 在 multi-variant 與 single-variant 分支都從 `sub.monitorConc` 推 precision 傳入
+- `Legend.tsx` 用同一個 `decimalsOf(activeSub.monitorConc)` 算 precision 傳給 `getLegendModel`
+
+### 10.5 不影響 contour rebuild
+
+`legend.visible` 是純展示，**不要**加進 `computeContourKey`，不然每次切換顯隱都觸發 rebuild。
+
+### 10.6 預設無箭頭 + 日期 marker 預設右下
+
+濃度等值線視覺已經夠雜（band 填色 + 主線 + threshold 線），向量箭頭通常無語意（gradient 不代表流向）→ 預設關閉：
+
+```ts
+// rebuildContourLayer 開頭：
+const effectiveArrows = wl.sourceKind === 'gw-conc'
+  ? (wl.arrows ?? { enabled: false })
+  : wl.arrows;
+```
+
+兩條分支都用 `effectiveArrows` 取代 `wl.arrows`，確保 import 舊專案/外部注入未指定 arrows 的圖層也保證關箭頭。
+
+日期 marker 預設位置（無 `dateLabel.lng/lat` 時）取 bbox 右下而非中心：避免擋資料點，使用者要拖曳再拖曳。
+
 ## 不要做的事
 
 - **不要**為每個變數建獨立圖層後再硬塞回一個 `Map<id, Layer>` — 直接走合併 features + filter 才能享受 maplibre 的硬體加速切換
@@ -304,3 +392,6 @@ return JSON.stringify({
 - **不要**讓 `wl.fill` / `wl.lines` 成為 multi-variant 圖層的「主要儲存」— 應該用 `substanceStyles[id]` 做 per-variant；`wl.fill` 在 multi-variant 模式只剩「無覆寫時的 fallback」角色
 - **不要**把 `makeXxxDefaultsForSub` 留在 contour.ts 內部 — Step 9.2 須 export，因為 StylePopover (Step 9.4) 也要用它算 default fill bands
 - **不要**忘記 StylePopover 在 multi-variant 模式下需要拿到 source layer（Step 9.4 的 `sourceLayer` prop）— 沒有它就讀不到 monitorConc / controlConc，無法算 fallback fill bands
+- **不要**把 legend toggle 塞進 StylePopover — Step 10.3 解釋為何要放 LayerItem flag row
+- **不要**忘記在 LayerItem flag rows 之間用虛線分隔「資料處理 row（log-transform / clamp）」與「展示 row（legend / date）」— 同一片 stacking 沒分隔很難視覺解析
+- **不要**讓 legend 數字精度與主線 z label 不一致 — 兩者都從 `decimalsOf(monitorConc)` 推，避免「legend 0.0025 但主線 0.00」這種視覺衝突

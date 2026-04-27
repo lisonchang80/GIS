@@ -1489,6 +1489,26 @@ body,
   border-right: 1px solid var(--border);
 }
 
+.attr-table td.gw-conc-cell-warn {
+  background: rgba(249, 115, 22, 0.22);
+}
+
+.attr-table td.gw-conc-cell-alert {
+  background: rgba(239, 68, 68, 0.28);
+}
+
+.attr-table td.gw-conc-cell-warn.editable:hover {
+  background: rgba(249, 115, 22, 0.34);
+  outline: 1px dashed rgba(249, 115, 22, 0.85);
+  outline-offset: -1px;
+}
+
+.attr-table td.gw-conc-cell-alert.editable:hover {
+  background: rgba(239, 68, 68, 0.4);
+  outline: 1px dashed rgba(239, 68, 68, 0.9);
+  outline-offset: -1px;
+}
+
 .gw-conc-toggle {
   display: inline-flex;
   align-items: center;
@@ -1686,6 +1706,30 @@ body,
   background: rgba(59, 130, 246, 0.3);
   border-color: rgba(59, 130, 246, 0.6);
   color: #fff;
+}
+
+.water-level-sub-btn.warn {
+  background: rgba(249, 115, 22, 0.22);
+  border-color: rgba(249, 115, 22, 0.6);
+  color: #fff;
+}
+
+.water-level-sub-btn.alert {
+  background: rgba(239, 68, 68, 0.28);
+  border-color: rgba(239, 68, 68, 0.65);
+  color: #fff;
+}
+
+.water-level-sub-btn.active.warn {
+  background: rgba(249, 115, 22, 0.36);
+  border-color: rgba(249, 115, 22, 0.9);
+  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.85);
+}
+
+.water-level-sub-btn.active.alert {
+  background: rgba(239, 68, 68, 0.42);
+  border-color: rgba(239, 68, 68, 0.95);
+  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.85);
 }
 
 .water-level-date {

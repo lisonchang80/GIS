@@ -2221,10 +2221,22 @@ function GwConcTabPanel({
                           const isEditing =
                             cellEditing?.originalIdx === originalIdx &&
                             cellEditing.date === date;
+                          const C = activeSubstance.controlConc;
+                          const M = activeSubstance.monitorConc;
+                          let level: 'alert' | 'warn' | null = null;
+                          if (num !== null) {
+                            if (typeof C === 'number' && num >= C) level = 'alert';
+                            else if (typeof M === 'number' && num >= M) level = 'warn';
+                          }
+                          const cellCls = [
+                            'editable',
+                            isEditing ? 'editing' : '',
+                            level ? `gw-conc-cell-${level}` : '',
+                          ].filter(Boolean).join(' ');
                           return (
                             <td
                               key={date}
-                              className={`editable ${isEditing ? 'editing' : ''}`}
+                              className={cellCls}
                               onClick={() => !isEditing && startCellEdit(originalIdx, date)}
                             >
                               {isEditing ? (

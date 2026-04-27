@@ -170,6 +170,7 @@ export function LayerPanel(p: Props) {
             <LayerItem
               key={layer.id}
               layer={layer}
+              allLayers={p.layers}
               index={i}
               total={p.layers.length}
               dragOver={overId === layer.id && draggingId !== layer.id ? overPosition : null}

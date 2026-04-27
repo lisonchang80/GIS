@@ -4,6 +4,7 @@ import { LayerIcon } from './LayerIcon';
 
 interface Props {
   layer: VectorLayer;
+  allLayers: VectorLayer[];
   index: number;
   total: number;
   dragOver: 'above' | 'below' | null;
@@ -35,6 +36,36 @@ export function LayerItem(p: Props) {
   const wlActiveIdx = wl ? Math.max(0, wl.dates.indexOf(wl.activeDate)) : 0;
 
   const isMultiSub = !!wl?.substances && wl.substances.length > 0;
+
+  const subStatus: Record<string, 'alert' | 'warn' | null> = {};
+  if (isMultiSub && wl && wl.sourceKind === 'gw-conc' && wl.sourceLayerId && wl.sourceTabId) {
+    const srcLayer = p.allLayers.find((l) => l.id === wl.sourceLayerId);
+    const srcTab = srcLayer?.gwConcTabs?.find((t) => t.id === wl.sourceTabId);
+    if (srcLayer && srcTab) {
+      const activeDate = wl.activeDate;
+      for (const s of wl.substances ?? []) {
+        const subDef = srcTab.substances.find((x) => x.id === s.id);
+        const C = subDef?.controlConc;
+        const M = subDef?.monitorConc;
+        let alert = false;
+        let warn = false;
+        for (const f of srcLayer.data.features) {
+          const props = (f.properties ?? {}) as Record<string, unknown>;
+          const gw = props['__gwConc'] as
+            | Record<string, Record<string, Record<string, unknown>>>
+            | undefined;
+          const v = gw?.[wl.sourceTabId!]?.[s.id]?.[activeDate];
+          if (typeof v !== 'number') continue;
+          if (typeof C === 'number' && v >= C) {
+            alert = true;
+            break;
+          }
+          if (typeof M === 'number' && v >= M) warn = true;
+        }
+        subStatus[s.id] = alert ? 'alert' : warn ? 'warn' : null;
+      }
+    }
+  }
 
   const setModel = (model: 'idw' | 'tin' | 'kriging' | 'indicator') => {
     if (!wl) return;
@@ -177,17 +208,27 @@ export function LayerItem(p: Props) {
           )}
           {isMultiSub && (
             <div className="water-level-row water-level-sub-row">
-              {wl.substances!.map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  className={`btn xs water-level-sub-btn${wl.activeSubstance === s.id ? ' active' : ''}`}
-                  onClick={() => setActiveSubstance(s.id)}
-                  title={s.name}
-                >
-                  {s.name}
-                </button>
-              ))}
+              {wl.substances!.map((s) => {
+                const status = subStatus[s.id];
+                const cls = [
+                  'btn',
+                  'xs',
+                  'water-level-sub-btn',
+                  wl.activeSubstance === s.id ? 'active' : '',
+                  status ? status : '',
+                ].filter(Boolean).join(' ');
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    className={cls}
+                    onClick={() => setActiveSubstance(s.id)}
+                    title={s.name}
+                  >
+                    {s.name}
+                  </button>
+                );
+              })}
             </div>
           )}
           <div className="water-level-row">

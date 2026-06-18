@@ -14,8 +14,10 @@ import { bufferLayer, fcToLayer, type BufferUnits } from './geoOps';
 import { searchLand, type LandQueryParams } from './landQuery';
 import { BASEMAPS, basemapDefaultVersionIndex } from './basemaps';
 import type { BaseMapId, VectorLayer } from './types';
+import { SOIL_BATCH_KEY } from './types';
 import { detectKind, ensureNames, fileToGeoJSON, geometryBounds } from './importers';
 import { syncAllContours, syncContoursForSource, syncSingleContour } from './contour';
+import { syncAllExceedance, syncExceedanceForSource } from './exceedance';
 import {
   clearProject,
   downloadProject,
@@ -73,6 +75,7 @@ export default function App() {
   const [attributesLayerId, setAttributesLayerId] = useState<string | null>(null);
   const [stylePopoverLayerId, setStylePopoverLayerId] = useState<string | null>(null);
   const [pickingCoords, setPickingCoords] = useState<{ layerId: string; featureIndex: number } | null>(null);
+  const [addPointTarget, setAddPointTarget] = useState<string | null>(null);
 
   const toggleAttributes = useCallback((id: string) => {
     setAttributesLayerId((prev) => (prev === id ? null : id));
@@ -100,7 +103,7 @@ export default function App() {
         setBasemapVersionIndex(project.basemapVersionIndex ?? defaultIdx);
         setBasemapOpacity(project.basemapOpacity ?? 1);
         if (project.projectName) setProjectName(project.projectName);
-        setLayers(syncAllContours(project.layers.map((l) => ({ ...l, data: ensureNames(l.data) }))));
+        setLayers(syncAllExceedance(syncAllContours(project.layers.map((l) => ({ ...l, data: ensureNames(l.data) })))));
         if (typeof project.colorCursor === 'number') colorCursor.current = project.colorCursor;
         pendingProjectRef.current = project;
         setSavedAt(new Date(project.savedAt));
@@ -251,8 +254,8 @@ export default function App() {
   const updateLayer = useCallback((id: string, patch: Partial<VectorLayer>) => {
     setLayers((prev) => {
       const next = prev.map((l) => (l.id === id ? { ...l, ...patch } : l));
-      if ('data' in patch || 'gwConcTabs' in patch) {
-        return syncContoursForSource(next, id);
+      if ('data' in patch || 'gwConcTabs' in patch || 'soilConcTabs' in patch) {
+        return syncExceedanceForSource(syncContoursForSource(next, id), id);
       }
       if ('waterLevel' in patch) {
         const before = prev.find((l) => l.id === id);
@@ -535,7 +538,34 @@ export default function App() {
     setPickingCoords({ layerId: attributesLayerId, featureIndex });
   }, [attributesLayerId]);
 
+  const handleStartAddPointPick = useCallback(() => {
+    if (!attributesLayerId) return;
+    setDrawMode('static');
+    setPickingCoords(null);
+    setAddPointTarget(attributesLayerId);
+  }, [attributesLayerId]);
+
   const handleMapPick = useCallback((lng: number, lat: number) => {
+    if (addPointTarget) {
+      const targetId = addPointTarget;
+      setLayers((prev) => {
+        const next = prev.map((l) => {
+          if (l.id !== targetId) return l;
+          const props: Record<string, unknown> = {};
+          if ((l.soilConcTabs?.length ?? 0) > 0) props[SOIL_BATCH_KEY] = '';
+          const feat: Feature = {
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [lng, lat] },
+            properties: props,
+          };
+          const features = [...l.data.features, feat];
+          return { ...l, data: { ...l.data, features }, featureCount: features.length };
+        });
+        return syncExceedanceForSource(syncContoursForSource(next, targetId), targetId);
+      });
+      setAddPointTarget(null);
+      return;
+    }
     if (!pickingCoords) return;
     const { layerId, featureIndex } = pickingCoords;
     setLayers((prev) => {
@@ -548,10 +578,10 @@ export default function App() {
         });
         return { ...l, data: { ...l.data, features: newFeatures } };
       });
-      return syncContoursForSource(next, layerId);
+      return syncExceedanceForSource(syncContoursForSource(next, layerId), layerId);
     });
     setPickingCoords(null);
-  }, [pickingCoords]);
+  }, [pickingCoords, addPointTarget]);
 
   const handleCancelPick = useCallback(() => setPickingCoords(null), []);
 
@@ -613,13 +643,16 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!pickingCoords) return;
+    if (!pickingCoords && !addPointTarget) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setPickingCoords(null);
+      if (e.key === 'Escape') {
+        setPickingCoords(null);
+        setAddPointTarget(null);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [pickingCoords]);
+  }, [pickingCoords, addPointTarget]);
 
   const handleClearProject = async () => {
     if (!window.confirm('確定要清除瀏覽器內的存檔嗎？\n目前畫面上的圖層與繪製也會被清空。')) return;
@@ -701,7 +734,7 @@ export default function App() {
           layers={layers}
           onMapReady={handleMapReady}
           onDrawReady={handleDrawReady}
-          pickMode={!!pickingCoords}
+          pickMode={!!pickingCoords || !!addPointTarget}
           onPick={handleMapPick}
           onDateLabelMove={handleDateLabelMove}
         />
@@ -728,6 +761,8 @@ export default function App() {
             pickingFeatureIndex={pickingCoords?.layerId === layer.id ? pickingCoords.featureIndex : null}
             onStartPick={handleStartPickCoords}
             onCancelPick={handleCancelPick}
+            onStartAddPointPick={handleStartAddPointPick}
+            addPointPickActive={addPointTarget === layer.id}
           />
         );
       })()}

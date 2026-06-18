@@ -2,13 +2,17 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Feature, FeatureCollection } from 'geojson';
 import * as turf from '@turf/turf';
 import type {
+  ExceedanceConfig,
   GwConcSubstance,
   GwConcTab,
+  SoilConcTab,
+  SoilLandUse,
   VectorLayer,
   WaterLevelCustomBand,
   WaterLevelFill,
   WaterLevelLines,
 } from './types';
+import { SOIL_BATCH_KEY } from './types';
 import {
   buildContourFeaturesForLayer,
   buildContourLayerFeatures,
@@ -16,6 +20,17 @@ import {
   type ThresholdLine,
 } from './contour';
 import { lookupGwConcStandard } from './gwConcStandards';
+import { lookupSoilConcStandard, SOIL_POLLUTANTS } from './soilConcStandards';
+import {
+  batchOf,
+  buildExceedancePoints,
+  classifyExceedance,
+  collectBatches,
+  EXCEEDANCE_COLORS,
+  reconcileBatches,
+  readSoilConc,
+} from './exceedance';
+import { fileToGeoJSON, ensureNames } from './importers';
 
 function makeGwConcDefaults(sub: GwConcSubstance): {
   fill: WaterLevelFill | undefined;
@@ -114,6 +129,8 @@ interface Props {
   pickingFeatureIndex?: number | null;
   onStartPick?: (featureIndex: number) => void;
   onCancelPick?: () => void;
+  onStartAddPointPick?: () => void;
+  addPointPickActive?: boolean;
 }
 
 interface EditingCell {
@@ -133,6 +150,8 @@ export function AttributeTable({
   pickingFeatureIndex,
   onStartPick,
   onCancelPick,
+  onStartAddPointPick,
+  addPointPickActive,
 }: Props) {
   const [query, setQuery] = useState('');
   const [sortKey, setSortKey] = useState<string | null>(null);
@@ -161,8 +180,64 @@ export function AttributeTable({
 
   const gwConcTabs = layer.gwConcTabs ?? [];
   const activeGwConcTab = gwConcTabs.find((t) => t.id === activeTab);
+  const soilConcTabs = layer.soilConcTabs ?? [];
+  const activeSoilConcTab = soilConcTabs.find((t) => t.id === activeTab);
+  const hasSoilTabs = soilConcTabs.length > 0;
   const [draggingSubId, setDraggingSubId] = useState<string | null>(null);
   const [dragOverTrash, setDragOverTrash] = useState(false);
+  const pointFileRef = useRef<HTMLInputElement>(null);
+  const [addPointMenuOpen, setAddPointMenuOpen] = useState(false);
+  const [addingManualPoint, setAddingManualPoint] = useState(false);
+  const [manualPoint, setManualPoint] = useState({ lng: '', lat: '', name: '' });
+
+  const appendPointFeatures = (features: Feature[]) => {
+    if (features.length === 0) return;
+    const withCols = features.map((f) => {
+      const props = { ...((f.properties ?? {}) as Record<string, unknown>) };
+      if (hasSoilTabs && !(SOIL_BATCH_KEY in props)) props[SOIL_BATCH_KEY] = '';
+      return { ...f, properties: props } as Feature;
+    });
+    const data = { ...layer.data, features: [...layer.data.features, ...withCols] } as FeatureCollection;
+    onUpdateLayer(layer.id, { data, featureCount: data.features.length });
+  };
+
+  const handleAddManualPoint = () => {
+    const lng = parseFloat(manualPoint.lng);
+    const lat = parseFloat(manualPoint.lat);
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
+      window.alert('請輸入有效的經度、緯度');
+      return;
+    }
+    const name = manualPoint.name.trim();
+    appendPointFeatures([
+      {
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [lng, lat] },
+        properties: { ...(name ? { 名稱: name } : {}) },
+      } as Feature,
+    ]);
+    setManualPoint({ lng: '', lat: '', name: '' });
+    setAddingManualPoint(false);
+    setAddPointMenuOpen(false);
+  };
+
+  const handleAddPointFile = async (file: File) => {
+    try {
+      const fc = ensureNames(await fileToGeoJSON(file));
+      const pts = fc.features.filter(
+        (f) => f.geometry?.type === 'Point' || f.geometry?.type === 'MultiPoint',
+      );
+      if (pts.length === 0) {
+        window.alert('檔案中沒有點位資料');
+        return;
+      }
+      appendPointFeatures(pts);
+      window.alert(`已新增 ${pts.length} 個點位`);
+    } catch (e) {
+      window.alert('載入失敗：' + (e as Error).message);
+    }
+    setAddPointMenuOpen(false);
+  };
 
   const deleteHydroTab = () => {
     const hasData = (layer.hydroDates?.length ?? 0) > 0;
@@ -230,10 +305,59 @@ export function AttributeTable({
     onUpdateLayer(layer.id, { data, gwConcTabs: newTabs });
   };
 
+  const deleteSoilConcTab = (tabId: string) => {
+    const tab = soilConcTabs.find((t) => t.id === tabId);
+    if (!tab) return;
+    const hasContent = (tab.label?.trim().length ?? 0) > 0 || tab.substances.length > 0;
+    if (hasContent) {
+      if (!window.confirm('刪除此土壤濃度監測分頁將清除所有設定與資料，確定？')) return;
+    }
+    const newFeatures = layer.data.features.map((f) => {
+      const props = (f.properties ?? {}) as Record<string, unknown>;
+      const soil = props['__soilConc'] as Record<string, unknown> | undefined;
+      if (!soil || !(tabId in soil)) return f;
+      const next = { ...soil };
+      delete next[tabId];
+      return { ...f, properties: { ...props, __soilConc: next } } as Feature;
+    });
+    const data: FeatureCollection = { ...layer.data, features: newFeatures };
+    const nextTabs = soilConcTabs.filter((t) => t.id !== tabId);
+    onUpdateLayer(layer.id, { data, soilConcTabs: nextTabs });
+    if (activeTab === tabId) setActiveTab('main');
+  };
+
+  const deleteSoilConcSubstance = (tabId: string, subId: string) => {
+    const tab = soilConcTabs.find((t) => t.id === tabId);
+    if (!tab) return;
+    const target = tab.substances.find((s) => s.id === subId);
+    if (!target) return;
+    const label = target.name?.trim() || '此污染物';
+    if (!window.confirm(`確定刪除「${label}」？所有相關資料都會移除。`)) return;
+    const nextSubstances = tab.substances.filter((s) => s.id !== subId);
+    const newTabs = soilConcTabs.map((t) =>
+      t.id === tabId ? { ...t, substances: nextSubstances } : t,
+    );
+    const newFeatures = layer.data.features.map((f) => {
+      const props = (f.properties ?? {}) as Record<string, unknown>;
+      const soil = props['__soilConc'] as Record<string, unknown> | undefined;
+      const tabBucket = soil?.[tabId] as Record<string, unknown> | undefined;
+      if (!tabBucket || !(subId in tabBucket)) return f;
+      const nextBucket = { ...tabBucket };
+      delete nextBucket[subId];
+      return {
+        ...f,
+        properties: { ...props, __soilConc: { ...soil, [tabId]: nextBucket } },
+      } as Feature;
+    });
+    const data: FeatureCollection = { ...layer.data, features: newFeatures };
+    onUpdateLayer(layer.id, { data, soilConcTabs: newTabs });
+  };
+
   const canDeleteActiveTab = activeTab !== 'main';
   const handleTrashClick = () => {
     if (!canDeleteActiveTab) return;
     if (activeTab === 'hydro') deleteHydroTab();
+    else if (activeSoilConcTab) deleteSoilConcTab(activeTab);
     else deleteGwConcTab(activeTab);
   };
 
@@ -245,7 +369,9 @@ export function AttributeTable({
           ? '主屬性表無法刪除'
           : activeTab === 'hydro'
             ? '刪除水文監測分頁'
-            : '刪除此地下水濃度監測分頁（或拖曳污染物到此刪除）'
+            : activeSoilConcTab
+              ? '刪除此土壤濃度監測分頁（或拖曳污染物到此刪除）'
+              : '刪除此地下水濃度監測分頁（或拖曳污染物到此刪除）'
       }
       onClick={() => {
         if (draggingSubId) return;
@@ -260,7 +386,9 @@ export function AttributeTable({
       onDragLeave={() => setDragOverTrash(false)}
       onDrop={(e) => {
         e.preventDefault();
-        if (draggingSubId && activeGwConcTab) {
+        if (draggingSubId && activeSoilConcTab) {
+          deleteSoilConcSubstance(activeSoilConcTab.id, draggingSubId);
+        } else if (draggingSubId && activeGwConcTab) {
           deleteGwConcSubstance(activeGwConcTab.id, draggingSubId);
         }
         setDragOverTrash(false);
@@ -857,6 +985,16 @@ export function AttributeTable({
               {gwConcTabTitle(tab)}
             </button>
           ))}
+          {soilConcTabs.map((tab) => (
+            <button
+              key={tab.id}
+              className={`dock-tab ${activeTab === tab.id ? 'active' : ''}`}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+            >
+              {soilConcTabTitle(tab)}
+            </button>
+          ))}
           <div className="dock-tab-add-wrap">
             <button
               className="dock-tab-add"
@@ -905,9 +1043,39 @@ export function AttributeTable({
                     <span className="dock-tab-menu-hint">需要 Point</span>
                   )}
                 </button>
-                <button className="dock-tab-menu-item" disabled title="即將推出">
+                <button
+                  className="dock-tab-menu-item"
+                  disabled={!onlyPoints}
+                  title={!onlyPoints ? '需要 Point 圖層' : '新增土壤濃度監測分頁'}
+                  onClick={() => {
+                    const id = `soil-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+                    const newTab: SoilConcTab = { id, landUse: 'general', substances: [] };
+                    const needsCol = layer.data.features.some(
+                      (f) => !(SOIL_BATCH_KEY in ((f.properties ?? {}) as Record<string, unknown>)),
+                    );
+                    const patch: Partial<VectorLayer> = { soilConcTabs: [...soilConcTabs, newTab] };
+                    if (needsCol) {
+                      patch.data = {
+                        ...layer.data,
+                        features: layer.data.features.map((f) => {
+                          const props = (f.properties ?? {}) as Record<string, unknown>;
+                          if (SOIL_BATCH_KEY in props) return f;
+                          return { ...f, properties: { ...props, [SOIL_BATCH_KEY]: '' } } as Feature;
+                        }),
+                      } as FeatureCollection;
+                    }
+                    onUpdateLayer(layer.id, patch);
+                    setActiveTab('main');
+                    setTabMenuOpen(false);
+                    window.alert(
+                      '已新增「土壤濃度監測」分頁，並在主屬性表加入「批次名稱」欄位。\n\n請先在主屬性表為每個點位填寫「批次名稱」（同一批採樣填相同名稱），再回到此分頁選擇批次輸入濃度。',
+                    );
+                  }}
+                >
                   <span>土壤濃度監測</span>
-                  <span className="dock-tab-menu-hint">即將推出</span>
+                  {!onlyPoints && (
+                    <span className="dock-tab-menu-hint">需要 Point</span>
+                  )}
                 </button>
                 <button className="dock-tab-menu-item" disabled title="即將推出">
                   <span>土壤氣體濃度監測</span>
@@ -938,8 +1106,82 @@ export function AttributeTable({
             className="btn xs"
             onClick={() => setAddingColumn((v) => !v)}
           >+ 欄位</button>
+          <div className="add-point-wrap">
+            <button
+              className={`btn xs ${addPointPickActive ? 'primary' : ''}`}
+              onClick={() => setAddPointMenuOpen((v) => !v)}
+              title="新增點位（手動座標 / 地圖點選 / 載入檔案）"
+            >+ 點位</button>
+            {addPointMenuOpen && (
+              <div className="add-point-menu">
+                <button
+                  className="dock-tab-menu-item"
+                  onClick={() => { setAddingManualPoint(true); setAddPointMenuOpen(false); }}
+                >手動輸入座標</button>
+                <button
+                  className="dock-tab-menu-item"
+                  onClick={() => { setAddPointMenuOpen(false); onStartAddPointPick?.(); }}
+                >在地圖上點選</button>
+                <button
+                  className="dock-tab-menu-item"
+                  onClick={() => pointFileRef.current?.click()}
+                >載入檔案（多點位）</button>
+              </div>
+            )}
+            <input
+              ref={pointFileRef}
+              type="file"
+              accept=".geojson,.json,.kml,.gpx,.zip,.shp,.csv"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleAddPointFile(f);
+                if (pointFileRef.current) pointFileRef.current.value = '';
+              }}
+            />
+          </div>
           {trashButton}
         </div>
+        )}
+
+        {activeTab === 'main' && addPointPickActive && (
+          <div className="add-column-row pick-hint-row">
+            <span className="hint">在地圖上點選位置以新增點位（Esc 取消）</span>
+          </div>
+        )}
+
+        {activeTab === 'main' && addingManualPoint && (
+          <div className="add-column-row">
+            <input
+              autoFocus
+              className="search-input mini"
+              type="number"
+              step="any"
+              placeholder="經度 lng"
+              value={manualPoint.lng}
+              onChange={(e) => setManualPoint((p) => ({ ...p, lng: e.target.value }))}
+            />
+            <input
+              className="search-input mini"
+              type="number"
+              step="any"
+              placeholder="緯度 lat"
+              value={manualPoint.lat}
+              onChange={(e) => setManualPoint((p) => ({ ...p, lat: e.target.value }))}
+            />
+            <input
+              className="search-input"
+              placeholder="名稱（選填）"
+              value={manualPoint.name}
+              onChange={(e) => setManualPoint((p) => ({ ...p, name: e.target.value }))}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleAddManualPoint();
+                if (e.key === 'Escape') setAddingManualPoint(false);
+              }}
+            />
+            <button className="btn xs primary" onClick={handleAddManualPoint}>新增</button>
+            <button className="btn xs" onClick={() => setAddingManualPoint(false)}>取消</button>
+          </div>
         )}
 
         {activeTab === 'main' && addingColumn && (
@@ -1362,6 +1604,18 @@ export function AttributeTable({
             trashSlot={trashButton}
           />
         )}
+        {activeSoilConcTab && (
+          <SoilConcTabPanel
+            tab={activeSoilConcTab}
+            allTabs={soilConcTabs}
+            layer={layer}
+            onUpdateLayer={onUpdateLayer}
+            onAddLayer={onAddLayer}
+            draggingSubId={draggingSubId}
+            setDraggingSubId={setDraggingSubId}
+            trashSlot={trashButton}
+          />
+        )}
     </div>
   );
 }
@@ -1369,6 +1623,11 @@ export function AttributeTable({
 function gwConcTabTitle(tab: GwConcTab): string {
   const label = tab.label?.trim();
   return label ? `地下水濃度監測 (${label})` : '地下水濃度監測';
+}
+
+function soilConcTabTitle(tab: SoilConcTab): string {
+  const label = tab.label?.trim();
+  return label ? `土壤濃度監測 (${label})` : '土壤濃度監測';
 }
 
 function GwConcTabPanel({
@@ -2310,6 +2569,561 @@ function GwConcTabPanel({
         </>
       )}
     </div>
+  );
+}
+
+function SoilConcTabPanel({
+  tab,
+  allTabs,
+  layer,
+  onUpdateLayer,
+  onAddLayer,
+  draggingSubId,
+  setDraggingSubId,
+  trashSlot,
+}: {
+  tab: SoilConcTab;
+  allTabs: SoilConcTab[];
+  layer: VectorLayer;
+  onUpdateLayer: (id: string, patch: Partial<VectorLayer>) => void;
+  onAddLayer: (layer: VectorLayer) => void;
+  draggingSubId: string | null;
+  setDraggingSubId: (id: string | null) => void;
+  trashSlot: React.ReactNode;
+}) {
+  const [activeSub, setActiveSub] = useState<string | null>(tab.substances[0]?.id ?? null);
+  const [addingSubstance, setAddingSubstance] = useState(false);
+  const [newSubstanceName, setNewSubstanceName] = useState('');
+  const [dragOverSubId, setDragOverSubId] = useState<string | null>(null);
+  const [cellEditing, setCellEditing] = useState<{ originalIdx: number; value: string } | null>(null);
+  const reportFileRef = useRef<HTMLInputElement>(null);
+
+  const landUse: SoilLandUse = tab.landUse ?? 'general';
+  const batches = collectBatches(layer);
+  const activeBatch = tab.activeBatch && batches.includes(tab.activeBatch) ? tab.activeBatch : (batches[0] ?? '');
+
+  useEffect(() => {
+    if (activeSub && tab.substances.some((s) => s.id === activeSub)) return;
+    setActiveSub(tab.substances[0]?.id ?? null);
+  }, [tab.id, tab.substances, activeSub]);
+
+  const updateTab = (patch: Partial<SoilConcTab>) => {
+    const next = allTabs.map((t) => (t.id === tab.id ? { ...t, ...patch } : t));
+    onUpdateLayer(layer.id, { soilConcTabs: next });
+  };
+
+  const updateSubstance = (subId: string, patch: Partial<GwConcSubstance>) => {
+    updateTab({ substances: tab.substances.map((s) => (s.id === subId ? { ...s, ...patch } : s)) });
+  };
+
+  const activeSubstance = tab.substances.find((s) => s.id === activeSub);
+
+  const handleAddSubstance = () => {
+    const name = newSubstanceName.trim();
+    if (!name) return;
+    const id = `sub-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const std = lookupSoilConcStandard(name, landUse);
+    const newSub: GwConcSubstance = {
+      id,
+      name,
+      ...(std ? { controlConc: std.controlConc, monitorConc: std.monitorConc, unit: std.unit } : { unit: 'mg/kg' }),
+    };
+    updateTab({ substances: [...tab.substances, newSub] });
+    setActiveSub(id);
+    setAddingSubstance(false);
+    setNewSubstanceName('');
+  };
+
+  const reorderSubstance = (fromId: string, toId: string) => {
+    if (fromId === toId) return;
+    const from = tab.substances.findIndex((s) => s.id === fromId);
+    const to = tab.substances.findIndex((s) => s.id === toId);
+    if (from < 0 || to < 0) return;
+    const next = [...tab.substances];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    updateTab({ substances: next });
+  };
+
+  const startCellEdit = (originalIdx: number) => {
+    if (!activeSubstance) return;
+    const v = readSoilConc(layer.data.features[originalIdx], tab.id, activeSubstance.id);
+    setCellEditing({ originalIdx, value: v !== null ? String(v) : '' });
+  };
+
+  const commitCellEdit = () => {
+    if (!cellEditing || !activeSubstance) return;
+    const { originalIdx, value } = cellEditing;
+    const trimmed = value.trim();
+    let nextVal: number | null = null;
+    if (trimmed !== '') {
+      const n = parseFloat(trimmed);
+      if (Number.isFinite(n)) nextVal = n;
+    }
+    const tabId = tab.id;
+    const subId = activeSubstance.id;
+    const newFeatures = layer.data.features.map((f, i) => {
+      if (i !== originalIdx) return f;
+      const props = (f.properties ?? {}) as Record<string, unknown>;
+      const soil = (props['__soilConc'] as Record<string, Record<string, unknown>> | undefined) ?? {};
+      const tabBucket = { ...((soil[tabId] as Record<string, unknown>) ?? {}) };
+      if (nextVal === null) delete tabBucket[subId];
+      else tabBucket[subId] = nextVal;
+      return { ...f, properties: { ...props, __soilConc: { ...soil, [tabId]: tabBucket } } } as Feature;
+    });
+    onUpdateLayer(layer.id, { data: { ...layer.data, features: newFeatures } as FeatureCollection });
+    setCellEditing(null);
+  };
+
+  const handleImportReport = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = String(reader.result ?? '').replace(/^\uFEFF/, '');
+      const rows = parseCsv(text);
+      if (rows.length < 2) {
+        window.alert('CSV 沒有資料');
+        return;
+      }
+      const header = rows[0].map((s) => s.trim());
+      const nameIdx = header.indexOf('名稱');
+      const subIdx = header.indexOf('污染物');
+      const concIdx = header.findIndex((h) => h === '濃度' || h.startsWith('濃度'));
+      const batchIdx = header.indexOf(SOIL_BATCH_KEY);
+      if (nameIdx < 0 || subIdx < 0 || concIdx < 0) {
+        window.alert('CSV 格式錯誤：需含「名稱」、「污染物」、「濃度」三欄（可選「批次名稱」）');
+        return;
+      }
+      const nameToIdx = new Map<string, number>();
+      layer.data.features.forEach((f, i) => {
+        if (f.geometry?.type !== 'Point' && f.geometry?.type !== 'MultiPoint') return;
+        const n = formatValue((f.properties as Record<string, unknown> | undefined)?.['名稱']).trim();
+        if (n && !nameToIdx.has(n)) nameToIdx.set(n, i);
+      });
+      const subByName = new Map<string, GwConcSubstance>();
+      for (const s of tab.substances) if (s.name?.trim()) subByName.set(s.name.trim(), s);
+      const newSubstances: GwConcSubstance[] = [...tab.substances];
+      const concUpdates = new Map<number, Map<string, number>>();
+      const batchUpdates = new Map<number, string>();
+      let imported = 0;
+      let skipped = 0;
+      for (let i = 1; i < rows.length; i++) {
+        const r = rows[i];
+        const name = (r[nameIdx] ?? '').trim();
+        const subName = (r[subIdx] ?? '').trim();
+        const concStr = (r[concIdx] ?? '').trim();
+        if (!name && !subName && !concStr) continue;
+        if (!name || !subName || !concStr) { skipped++; continue; }
+        const conc = parseFloat(concStr);
+        if (!Number.isFinite(conc)) { skipped++; continue; }
+        const featIdx = nameToIdx.get(name);
+        if (featIdx === undefined) { skipped++; continue; }
+        let sub = subByName.get(subName);
+        if (!sub) {
+          const std = lookupSoilConcStandard(subName, landUse);
+          sub = {
+            id: `sub-${Date.now()}-${Math.random().toString(36).slice(2, 6)}-${i}`,
+            name: subName,
+            ...(std ? { controlConc: std.controlConc, monitorConc: std.monitorConc, unit: std.unit } : { unit: 'mg/kg' }),
+          };
+          subByName.set(subName, sub);
+          newSubstances.push(sub);
+        }
+        if (!concUpdates.has(featIdx)) concUpdates.set(featIdx, new Map());
+        concUpdates.get(featIdx)!.set(sub.id, conc);
+        if (batchIdx >= 0) {
+          const b = (r[batchIdx] ?? '').trim();
+          if (b) batchUpdates.set(featIdx, b);
+        }
+        imported++;
+      }
+      if (imported === 0) {
+        window.alert(`沒有可匯入的資料${skipped > 0 ? `（${skipped} 筆忽略）` : ''}`);
+        return;
+      }
+      const tabId = tab.id;
+      const newFeatures = layer.data.features.map((f, i) => {
+        const cu = concUpdates.get(i);
+        const bu = batchUpdates.get(i);
+        if (!cu && bu === undefined) return f;
+        const props = (f.properties ?? {}) as Record<string, unknown>;
+        const nextProps: Record<string, unknown> = { ...props };
+        if (cu) {
+          const soil = (props['__soilConc'] as Record<string, Record<string, unknown>> | undefined) ?? {};
+          const tabBucket = { ...((soil[tabId] as Record<string, unknown>) ?? {}) };
+          for (const [subId, v] of cu) tabBucket[subId] = v;
+          nextProps['__soilConc'] = { ...soil, [tabId]: tabBucket };
+        }
+        if (bu !== undefined) nextProps[SOIL_BATCH_KEY] = bu;
+        return { ...f, properties: nextProps } as Feature;
+      });
+      const newTabs = allTabs.map((t) => (t.id === tabId ? { ...t, substances: newSubstances } : t));
+      onUpdateLayer(layer.id, {
+        soilConcTabs: newTabs,
+        data: { ...layer.data, features: newFeatures } as FeatureCollection,
+      });
+      window.alert(`匯入完成：${imported} 筆${skipped > 0 ? `，${skipped} 筆忽略（名稱對不到 / 數值無效 / 欄位空白）` : ''}`);
+    };
+    reader.readAsText(file, 'utf-8');
+  };
+
+  const makeExceedanceLayer = (name: string, features: Feature[], config: ExceedanceConfig): VectorLayer => ({
+    id: `soilx-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    name,
+    visible: true,
+    opacity: 0.95,
+    color: EXCEEDANCE_COLORS.alert,
+    strokeColor: '#ffffff',
+    strokeWidth: 1.5,
+    strokeVisible: true,
+    pointRadius: config.radius ?? 7,
+    labelVisible: true,
+    labelColor: '#ffffff',
+    labelHaloColor: '#000000',
+    labelSize: 11,
+    kind: 'point',
+    data: { type: 'FeatureCollection', features } as FeatureCollection,
+    featureCount: features.length,
+    exceedance: config,
+  });
+
+  const countMeasured = (subs: GwConcSubstance[]): number => {
+    let n = 0;
+    for (const f of layer.data.features) {
+      if (f.geometry?.type !== 'Point') continue;
+      for (const s of subs) if (readSoilConc(f, tab.id, s.id) !== null) n++;
+    }
+    return n;
+  };
+
+  const baseConfig = (): Pick<ExceedanceConfig, 'sourceLayerId' | 'sourceKind' | 'sourceTabId' | 'showOk' | 'showNodata' | 'radius'> => ({
+    sourceLayerId: layer.id,
+    sourceKind: 'soil-conc',
+    sourceTabId: tab.id,
+    showOk: true,
+    showNodata: false,
+    radius: 7,
+  });
+
+  const handleGenerateSingle = () => {
+    if (!activeSubstance) return;
+    if (countMeasured([activeSubstance]) === 0) {
+      window.alert(`「${activeSubstance.name}」尚無任何濃度資料`);
+      return;
+    }
+    const features = buildExceedancePoints(layer, tab, [activeSubstance]);
+    const config: ExceedanceConfig = {
+      ...baseConfig(),
+      sourceSubId: activeSubstance.id,
+      batches: reconcileBatches([], batches),
+    };
+    onAddLayer(makeExceedanceLayer(`${activeSubstance.name} 超標圖`, features, config));
+  };
+
+  const handleGenerateAll = () => {
+    if (tab.substances.length === 0) return;
+    if (countMeasured(tab.substances) === 0) {
+      window.alert('尚無任何濃度資料');
+      return;
+    }
+    const features = buildExceedancePoints(layer, tab, tab.substances);
+    const config: ExceedanceConfig = {
+      ...baseConfig(),
+      substances: tab.substances.map((s) => ({ id: s.id, name: s.name })),
+      activeSubstance: tab.substances[0].id,
+      batches: reconcileBatches([], batches),
+    };
+    onAddLayer(makeExceedanceLayer(`${tab.label?.trim() ? `${tab.label} ` : ''}多污染物超標圖`, features, config));
+  };
+
+  const batchRows = layer.data.features
+    .map((f, originalIdx) => ({ feature: f, originalIdx }))
+    .filter(({ feature }) => feature.geometry?.type === 'Point' || feature.geometry?.type === 'MultiPoint')
+    .filter(({ feature }) => batchOf(feature) === activeBatch);
+
+  return (
+    <div className="hydro-view">
+      <div className="gw-conc-config gw-conc-config-top">
+        <label className="gw-conc-field">
+          <span className="gw-conc-field-label">機構/批次</span>
+          <input
+            className="cell-input"
+            type="text"
+            placeholder="例如 SGS"
+            value={tab.label ?? ''}
+            onChange={(e) => updateTab({ label: e.target.value })}
+          />
+        </label>
+        <label className="gw-conc-field">
+          <span className="gw-conc-field-label">用地類別</span>
+          <select
+            className="select"
+            value={landUse}
+            onChange={(e) => updateTab({ landUse: e.target.value as SoilLandUse })}
+            title="影響新增污染物時帶入的管制/監測標準預設值"
+          >
+            <option value="general">其他用地</option>
+            <option value="farmland">食用作物農地</option>
+          </select>
+        </label>
+        <label className="gw-conc-field">
+          <span className="gw-conc-field-label">批次名稱</span>
+          <select
+            className="select"
+            value={activeBatch}
+            disabled={batches.length === 0}
+            onChange={(e) => updateTab({ activeBatch: e.target.value })}
+            title="選擇要輸入/檢視的採樣批次（批次名稱於主屬性表填寫）"
+          >
+            {batches.length === 0 && <option value="">（尚無批次）</option>}
+            {batches.map((b) => <option key={b} value={b}>{b}</option>)}
+          </select>
+        </label>
+        <button
+          className="btn xs"
+          title="匯入 CSV 報告（每列含名稱/污染物/濃度，可選批次名稱；缺少的污染物會自動建立）"
+          onClick={() => reportFileRef.current?.click()}
+        >匯入報告</button>
+        <input
+          ref={reportFileRef}
+          type="file"
+          accept=".csv,text/csv"
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) handleImportReport(f);
+            if (reportFileRef.current) reportFileRef.current.value = '';
+          }}
+        />
+        <button
+          className="hydro-gen-btn gw-conc-gen-all"
+          title="生成所有污染物的點位超標圖（含所有批次）"
+          onClick={handleGenerateAll}
+          disabled={tab.substances.length === 0 || batches.length === 0}
+        >
+          <ExceedanceIcon kind="multi" />
+        </button>
+        {trashSlot}
+      </div>
+
+      {batches.length === 0 ? (
+        <p className="hint" style={{ padding: '14px' }}>
+          尚未填寫批次名稱。請至「主屬性表」為每個點位填寫「批次名稱」欄位（同一批採樣填相同名稱），再回到此分頁。
+        </p>
+      ) : (
+        <>
+          <div className="gw-conc-subtabs">
+            {tab.substances.map((s) => {
+              const dragging = draggingSubId === s.id;
+              const dropTarget = dragOverSubId === s.id && draggingSubId && draggingSubId !== s.id;
+              return (
+                <div
+                  key={s.id}
+                  className={`gw-conc-subtab${activeSub === s.id ? ' active' : ''}${dragging ? ' dragging' : ''}${dropTarget ? ' drop-target' : ''}`}
+                  draggable
+                  onClick={() => setActiveSub(s.id)}
+                  onDragStart={(e) => {
+                    setDraggingSubId(s.id);
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', s.id);
+                  }}
+                  onDragEnd={() => {
+                    setDraggingSubId(null);
+                    setDragOverSubId(null);
+                  }}
+                  onDragOver={(e) => {
+                    if (!draggingSubId || draggingSubId === s.id) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    setDragOverSubId(s.id);
+                  }}
+                  onDragLeave={() => {
+                    if (dragOverSubId === s.id) setDragOverSubId(null);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    if (draggingSubId) reorderSubstance(draggingSubId, s.id);
+                    setDragOverSubId(null);
+                    setDraggingSubId(null);
+                  }}
+                >
+                  <span className="gw-conc-subtab-label">{s.name || '未命名'}</span>
+                </div>
+              );
+            })}
+            <button type="button" className="gw-conc-subtab-add" onClick={() => setAddingSubstance(true)}>+ 新增污染物</button>
+          </div>
+
+          {addingSubstance && (
+            <div className="add-column-row">
+              <input
+                autoFocus
+                className="search-input"
+                placeholder="污染物名稱（例如 鉛）"
+                list="soil-conc-pollutant-list"
+                value={newSubstanceName}
+                onChange={(e) => setNewSubstanceName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleAddSubstance();
+                  if (e.key === 'Escape') {
+                    setAddingSubstance(false);
+                    setNewSubstanceName('');
+                  }
+                }}
+              />
+              <button className="btn xs primary" onClick={handleAddSubstance}>建立</button>
+              <button className="btn xs" onClick={() => { setAddingSubstance(false); setNewSubstanceName(''); }}>取消</button>
+              <datalist id="soil-conc-pollutant-list">
+                {SOIL_POLLUTANTS.map((p) => <option key={p} value={p} />)}
+              </datalist>
+            </div>
+          )}
+
+          {activeSubstance ? (
+            <div className="gw-conc-config">
+              <label className="gw-conc-field">
+                <span className="gw-conc-field-label">管制標準</span>
+                <input
+                  className="cell-input"
+                  type="number"
+                  step="any"
+                  placeholder="—"
+                  value={activeSubstance.controlConc ?? ''}
+                  onChange={(e) => {
+                    const v = e.target.value.trim();
+                    if (v === '') {
+                      const { controlConc: _d, ...rest } = activeSubstance;
+                      updateTab({ substances: tab.substances.map((s) => (s.id === activeSubstance.id ? rest : s)) });
+                      return;
+                    }
+                    const n = parseFloat(v);
+                    if (Number.isFinite(n)) updateSubstance(activeSubstance.id, { controlConc: n });
+                  }}
+                />
+              </label>
+              <label className="gw-conc-field">
+                <span className="gw-conc-field-label">監測標準</span>
+                <input
+                  className="cell-input"
+                  type="number"
+                  step="any"
+                  placeholder="—"
+                  value={activeSubstance.monitorConc ?? ''}
+                  onChange={(e) => {
+                    const v = e.target.value.trim();
+                    if (v === '') {
+                      const { monitorConc: _d, ...rest } = activeSubstance;
+                      updateTab({ substances: tab.substances.map((s) => (s.id === activeSubstance.id ? rest : s)) });
+                      return;
+                    }
+                    const n = parseFloat(v);
+                    if (Number.isFinite(n)) updateSubstance(activeSubstance.id, { monitorConc: n });
+                  }}
+                />
+              </label>
+              <label className="gw-conc-field">
+                <span className="gw-conc-field-label">單位</span>
+                <input
+                  className="cell-input"
+                  type="text"
+                  placeholder="例如 mg/kg"
+                  value={activeSubstance.unit ?? ''}
+                  onChange={(e) => updateSubstance(activeSubstance.id, { unit: e.target.value })}
+                />
+              </label>
+            </div>
+          ) : (
+            !addingSubstance && (
+              <p className="hint" style={{ padding: '12px' }}>尚無污染物，點選「+ 新增污染物」開始建立</p>
+            )
+          )}
+
+          {activeSubstance && (
+            <>
+              <div className="table-wrap">
+                <table className="attr-table hydro-table gw-conc-table">
+                  <thead>
+                    <tr>
+                      <th className="row-num hydro-frozen hydro-frozen-num">#</th>
+                      <th className="hydro-frozen hydro-frozen-name gw-conc-frozen-last">名稱</th>
+                      <th className="hydro-date-th">濃度（{activeSubstance.name}）</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {batchRows.map(({ feature, originalIdx }, i) => {
+                      const props = (feature.properties ?? {}) as Record<string, unknown>;
+                      const num = readSoilConc(feature, tab.id, activeSubstance.id);
+                      const isEditing = cellEditing?.originalIdx === originalIdx;
+                      const level = classifyExceedance(num, activeSubstance.controlConc, activeSubstance.monitorConc);
+                      const cellLevel = level === 'alert' ? 'alert' : level === 'warn' ? 'warn' : null;
+                      const cellCls = ['editable', isEditing ? 'editing' : '', cellLevel ? `gw-conc-cell-${cellLevel}` : ''].filter(Boolean).join(' ');
+                      return (
+                        <tr key={originalIdx}>
+                          <td className="row-num hydro-frozen hydro-frozen-num">{i + 1}</td>
+                          <td className="hydro-frozen hydro-frozen-name gw-conc-frozen-last">{formatValue(props['名稱'])}</td>
+                          <td className={cellCls} onClick={() => !isEditing && startCellEdit(originalIdx)}>
+                            {isEditing ? (
+                              <input
+                                autoFocus
+                                type="number"
+                                step="any"
+                                className="cell-input"
+                                value={cellEditing.value}
+                                onChange={(e) => setCellEditing({ ...cellEditing, value: e.target.value })}
+                                onBlur={commitCellEdit}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') commitCellEdit();
+                                  if (e.key === 'Escape') setCellEditing(null);
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                            ) : (
+                              <span>{num !== null ? num.toString() : '-'}</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {batchRows.length === 0 && (
+                      <tr><td colSpan={3} className="hint" style={{ padding: '10px' }}>此批次目前沒有點位</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="hydro-bottom-bar">
+                <span className="hydro-legend-inline">
+                  <span className="ex-dot" style={{ background: EXCEEDANCE_COLORS.alert }} />超管制
+                  <span className="ex-dot" style={{ background: EXCEEDANCE_COLORS.warn }} />超監測
+                  <span className="ex-dot" style={{ background: EXCEEDANCE_COLORS.ok }} />合格
+                </span>
+                <button
+                  className="hydro-gen-btn"
+                  title="生成此污染物的點位超標圖（含所有批次）"
+                  onClick={handleGenerateSingle}
+                  disabled={batches.length === 0}
+                >
+                  <ExceedanceIcon kind="single" />
+                </button>
+                <span className="hydro-unit-hint">※ 批次 {activeBatch || '—'}・單位 {activeSubstance.unit?.trim() || '—'}</span>
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function ExceedanceIcon({ kind }: { kind: 'single' | 'multi' }) {
+  // 點位分級示意：三色點
+  const dots = kind === 'multi' ? 3 : 1;
+  const colors = [EXCEEDANCE_COLORS.alert, EXCEEDANCE_COLORS.warn, EXCEEDANCE_COLORS.ok];
+  return (
+    <svg width={18} height={14} viewBox="0 0 18 14" aria-hidden>
+      {Array.from({ length: dots }).map((_, i) => (
+        <circle key={i} cx={4 + i * 5} cy={7} r={2.6} fill={colors[i] ?? EXCEEDANCE_COLORS.ok} />
+      ))}
+    </svg>
   );
 }
 

@@ -1,4 +1,5 @@
 import type { VectorLayer } from './types';
+import { ShapeSwatch } from './ShapeSwatch';
 
 interface Props {
   layer: VectorLayer;
@@ -6,6 +7,20 @@ interface Props {
 }
 
 export function LayerIcon({ layer, onClick }: Props) {
+  // 一般點圖層：用實際選定的形狀（與地圖一致）
+  if (!layer.waterLevel && !layer.exceedance && layer.kind === 'point') {
+    return (
+      <span
+        className="layer-icon shape-icon"
+        onClick={onClick}
+        role="button"
+        style={{ cursor: onClick ? 'pointer' : undefined }}
+      >
+        <ShapeSwatch shape={layer.pointShape ?? 'circle'} color={layer.color} size={22} />
+      </span>
+    );
+  }
+
   const color = layer.color;
   const stroke = layer.strokeColor ?? layer.color;
   const strokeW = Math.min(layer.strokeWidth ?? 2, 3);
@@ -65,6 +80,16 @@ export function LayerIcon({ layer, onClick }: Props) {
         </>
       );
     }
+  } else if (layer.exceedance) {
+    const cfg = layer.exceedance.colors;
+    const dots = [cfg?.alert ?? '#dc2626', cfg?.warn ?? '#f59e0b', cfg?.ok ?? '#16a34a'];
+    content = (
+      <g fillOpacity={opacity}>
+        {dots.map((c, i) => (
+          <circle key={i} cx={6 + i * 6} cy={center} r={3} fill={c} />
+        ))}
+      </g>
+    );
   } else if (layer.kind === 'point') {
     content = (
       <circle

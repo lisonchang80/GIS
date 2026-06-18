@@ -13,6 +13,8 @@ import type {
   WaterLevelLines,
 } from './types';
 import { makeGwConcDefaultsForSub } from './contour';
+import { ShapeSwatch } from './ShapeSwatch';
+import { POINT_SHAPES, SHAPE_LABELS } from './pointShapes';
 
 const DASH_PRESETS: { value: WaterLevelDashStyle; svgDash?: string }[] = [
   { value: 'solid' },
@@ -384,6 +386,28 @@ export function StylePopover({ layer, sourceLayer, onClose, onUpdate }: Props) {
                 className="slider"
               />
               <span className="popover-value">{radius}px</span>
+            </div>
+          )}
+
+          {showPointSize && !isContour && (
+            <div className="popover-section">
+              <div className="popover-section-title">點形狀</div>
+              <div className="shape-grid">
+                {POINT_SHAPES.map((s) => {
+                  const active = (layer.pointShape ?? 'circle') === s;
+                  return (
+                    <button
+                      key={s}
+                      type="button"
+                      className={`shape-cell${active ? ' active' : ''}`}
+                      title={SHAPE_LABELS[s]}
+                      onClick={() => onUpdate({ pointShape: s })}
+                    >
+                      <ShapeSwatch shape={s} color={layer.color} size={18} />
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
 

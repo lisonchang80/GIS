@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import type { VectorLayer } from './types';
+import type { PointShape, VectorLayer } from './types';
 import { LayerIcon } from './LayerIcon';
+import { ShapePicker } from './ShapePicker';
 
 interface Props {
   layer: VectorLayer;
@@ -31,11 +32,21 @@ export function LayerItem(p: Props) {
   const [waterLevelExpanded, setWaterLevelExpanded] = useState(false);
 
   const wl = p.layer.waterLevel;
+  const ex = p.layer.exceedance;
   const isWaterLevel = !!wl;
+  const isExceedance = !!ex;
+  const isExpandable = isWaterLevel || isExceedance;
   const isWaterLevelMulti = !!wl && wl.dates.length > 1;
   const wlActiveIdx = wl ? Math.max(0, wl.dates.indexOf(wl.activeDate)) : 0;
 
   const isMultiSub = !!wl?.substances && wl.substances.length > 0;
+
+  const isExMultiSub = !!ex?.substances && ex.substances.length > 0;
+  const setExSub = (subId: string) => ex && p.onUpdate({ exceedance: { ...ex, activeSubstance: subId } });
+  const toggleBatch = (name: string, visible: boolean) =>
+    ex && p.onUpdate({ exceedance: { ...ex, batches: ex.batches.map((b) => (b.name === name ? { ...b, visible } : b)) } });
+  const setBatchShape = (name: string, shape: PointShape) =>
+    ex && p.onUpdate({ exceedance: { ...ex, batches: ex.batches.map((b) => (b.name === name ? { ...b, shape } : b)) } });
 
   const subStatus: Record<string, 'alert' | 'warn' | null> = {};
   if (isMultiSub && wl && wl.sourceKind === 'gw-conc' && wl.sourceLayerId && wl.sourceTabId) {
@@ -168,10 +179,10 @@ export function LayerItem(p: Props) {
             {p.layer.name}
           </span>
         )}
-        {isWaterLevel ? (
+        {isExpandable ? (
           <button
             className={`icon-btn ${waterLevelExpanded ? 'active' : ''}`}
-            title={isWaterLevelMulti ? '展開日期/模型' : '展開模型'}
+            title={isExceedance ? '展開超標圖設定' : isWaterLevelMulti ? '展開日期/模型' : '展開模型'}
             onClick={() => setWaterLevelExpanded((v) => !v)}
           >{waterLevelExpanded ? '▾' : '▸'}</button>
         ) : (
@@ -292,6 +303,69 @@ export function LayerItem(p: Props) {
                 }
               />
               日期
+            </label>
+          </div>
+        </>
+      )}
+      {isExceedance && waterLevelExpanded && ex && (
+        <>
+          {isExMultiSub && (
+            <div className="water-level-row water-level-sub-row">
+              {ex.substances!.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  className={['btn', 'xs', 'water-level-sub-btn', ex.activeSubstance === s.id ? 'active' : ''].filter(Boolean).join(' ')}
+                  onClick={() => setExSub(s.id)}
+                  title={s.name}
+                >
+                  {s.name}
+                </button>
+              ))}
+            </div>
+          )}
+          {ex.batches.length > 0 && (
+            <div className="exceedance-batches">
+              <div className="exceedance-batches-title">批次（勾選顯示・可改形狀）</div>
+              {ex.batches.map((b) => (
+                <div key={b.name} className="exceedance-batch-row">
+                  <label className="exceedance-batch-check" title={b.name}>
+                    <input
+                      type="checkbox"
+                      checked={b.visible !== false}
+                      onChange={(e) => toggleBatch(b.name, e.target.checked)}
+                    />
+                    <span className="exceedance-batch-name">{b.name || '（未命名）'}</span>
+                  </label>
+                  <ShapePicker value={b.shape} color="#e5e7eb" onChange={(s) => setBatchShape(b.name, s)} />
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="water-level-row water-level-flags-row water-level-flags-display">
+            <label className="water-level-flag">
+              <input
+                type="checkbox"
+                checked={ex.showOk !== false}
+                onChange={(e) => p.onUpdate({ exceedance: { ...ex, showOk: e.target.checked } })}
+              />
+              合格點
+            </label>
+            <label className="water-level-flag">
+              <input
+                type="checkbox"
+                checked={ex.showNodata === true}
+                onChange={(e) => p.onUpdate({ exceedance: { ...ex, showNodata: e.target.checked } })}
+              />
+              無資料點
+            </label>
+            <label className="water-level-flag">
+              <input
+                type="checkbox"
+                checked={ex.legend?.visible !== false}
+                onChange={(e) => p.onUpdate({ exceedance: { ...ex, legend: { ...(ex.legend ?? {}), visible: e.target.checked } } })}
+              />
+              圖例
             </label>
           </div>
         </>

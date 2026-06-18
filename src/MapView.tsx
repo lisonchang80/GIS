@@ -14,6 +14,8 @@ import {
 import { TerraDrawMapLibreGLAdapter } from 'terra-draw-maplibre-gl-adapter';
 import type { BaseMapOption, VectorLayer, WaterLevelArrows, WaterLevelFill, WaterLevelLines } from './types';
 import { buildBasemapStyle, basemapTiles } from './basemaps';
+import { ensurePointIcon, pointIconId, SHAPE_IMG_SIZE, SHAPE_DRAW_RATIO } from './pointShapes';
+import type { PointShape } from './types';
 
 function getActiveStyle(layer: VectorLayer): {
   fill: WaterLevelFill | undefined;
@@ -260,10 +262,13 @@ function lineId(id: string) {
 function pointId(id: string) {
   return `layer-point-${id}`;
 }
+function pointSymId(id: string) {
+  return `layer-pointsym-${id}`;
+}
 function labelId(id: string) {
   return `layer-label-${id}`;
 }
-const MANAGED_PREFIXES = ['layer-fill-', 'layer-line-', 'layer-point-', 'layer-label-'];
+const MANAGED_PREFIXES = ['layer-fill-', 'layer-line-', 'layer-pointsym-', 'layer-point-', 'layer-label-'];
 
 function syncLayers(map: MLMap, layers: VectorLayer[]) {
   const style = map.getStyle();
@@ -273,9 +278,10 @@ function syncLayers(map: MLMap, layers: VectorLayer[]) {
   );
   const keepIds = new Set<string>();
   for (const l of layers) {
+    const useSymbol = !!l.exceedance || (!!l.pointShape && l.pointShape !== 'circle');
     keepIds.add(fillId(l.id));
     keepIds.add(lineId(l.id));
-    keepIds.add(pointId(l.id));
+    keepIds.add(useSymbol ? pointSymId(l.id) : pointId(l.id));
     keepIds.add(labelId(l.id));
   }
   for (const l of managed) {
@@ -323,11 +329,13 @@ function syncLayers(map: MLMap, layers: VectorLayer[]) {
       : layer.labelVisible !== false;
     const labelVisibility = layer.visible && labelEffectivelyVisible ? 'visible' : 'none';
 
-    const dateFilter = layer.waterLevel
-      ? (['==', ['get', '__date'], layer.waterLevel.activeDate] as unknown as maplibregl.FilterSpecification)
+    const genActiveDate = layer.waterLevel?.activeDate;
+    const genActiveSub = layer.waterLevel?.activeSubstance ?? layer.exceedance?.activeSubstance;
+    const dateFilter = genActiveDate
+      ? (['==', ['get', '__date'], genActiveDate] as unknown as maplibregl.FilterSpecification)
       : null;
-    const subFilter = layer.waterLevel?.activeSubstance
-      ? (['==', ['get', '__substance'], layer.waterLevel.activeSubstance] as unknown as maplibregl.FilterSpecification)
+    const subFilter = genActiveSub
+      ? (['==', ['get', '__substance'], genActiveSub] as unknown as maplibregl.FilterSpecification)
       : null;
     const wrap = (base: maplibregl.FilterSpecification): maplibregl.FilterSpecification => {
       const filters: maplibregl.FilterSpecification[] = [base];
@@ -353,8 +361,25 @@ function syncLayers(map: MLMap, layers: VectorLayer[]) {
           ['==', ['geometry-type'], 'MultiPolygon'],
         ] as unknown as maplibregl.FilterSpecification);
     const lineFilter = wrap(lineBase);
-    const pointFilter = wrap(['any', ['==', ['geometry-type'], 'Point'], ['==', ['geometry-type'], 'MultiPoint']] as unknown as maplibregl.FilterSpecification);
-    const labelFilter = wrap(['all', ['has', '名稱'], ['!=', ['get', '名稱'], '']] as unknown as maplibregl.FilterSpecification);
+    let pointFilter = wrap(['any', ['==', ['geometry-type'], 'Point'], ['==', ['geometry-type'], 'MultiPoint']] as unknown as maplibregl.FilterSpecification);
+    let labelFilter = wrap(['all', ['has', '名稱'], ['!=', ['get', '名稱'], '']] as unknown as maplibregl.FilterSpecification);
+    if (layer.exceedance) {
+      const excl: maplibregl.FilterSpecification[] = [];
+      if (layer.exceedance.showOk === false) {
+        excl.push(['!=', ['get', '__exLevel'], 'ok'] as unknown as maplibregl.FilterSpecification);
+      }
+      if (layer.exceedance.showNodata !== true) {
+        excl.push(['!=', ['get', '__exLevel'], 'nodata'] as unknown as maplibregl.FilterSpecification);
+      }
+      const hiddenBatches = layer.exceedance.batches.filter((b) => b.visible === false).map((b) => b.name);
+      if (hiddenBatches.length > 0) {
+        excl.push(['!', ['in', ['get', '__batch'], ['literal', hiddenBatches]]] as unknown as maplibregl.FilterSpecification);
+      }
+      if (excl.length > 0) {
+        pointFilter = (['all', pointFilter, ...excl] as unknown as maplibregl.FilterSpecification);
+        labelFilter = (['all', labelFilter, ...excl] as unknown as maplibregl.FilterSpecification);
+      }
+    }
 
     const isContour = !!layer.waterLevel;
     const activeStyle = getActiveStyle(layer);
@@ -450,31 +475,104 @@ function syncLayers(map: MLMap, layers: VectorLayer[]) {
       map.setLayoutProperty(lineId(layer.id), 'visibility', lineVisibility);
     }
 
-    const pointR = layer.pointRadius ?? 5;
+    const ex = layer.exceedance;
+    const pointR = ex?.radius ?? layer.pointRadius ?? 5;
+    const useSymbol = !!ex || (!!layer.pointShape && layer.pointShape !== 'circle');
+    const circleColor: string | maplibregl.ExpressionSpecification = ex
+      ? (['match', ['get', '__exLevel'],
+          'alert', ex.colors?.alert ?? '#dc2626',
+          'warn', ex.colors?.warn ?? '#f59e0b',
+          'ok', ex.colors?.ok ?? '#16a34a',
+          ex.colors?.nodata ?? '#9ca3af'] as unknown as maplibregl.ExpressionSpecification)
+      : layer.color;
 
-    if (!map.getLayer(pointId(layer.id))) {
-      map.addLayer({
-        id: pointId(layer.id),
-        type: 'circle',
-        source: srcId,
-        filter: pointFilter,
-        paint: {
-          'circle-color': layer.color,
-          'circle-opacity': layer.opacity,
-          'circle-radius': pointR,
-          'circle-stroke-color': stroke,
-          'circle-stroke-width': pointStrokeW,
-        },
-        layout: { visibility },
-      });
+    if (useSymbol) {
+      if (map.getLayer(pointId(layer.id))) map.removeLayer(pointId(layer.id));
+      // 非 SDF：填色 + 描邊直接畫進圖示（保留尖角），依需要的（形狀×色）即時註冊
+      let iconImage: string | maplibregl.ExpressionSpecification;
+      if (ex) {
+        const exStroke = '#ffffff';
+        const levelColor: Record<string, string> = {
+          alert: ex.colors?.alert ?? '#dc2626',
+          warn: ex.colors?.warn ?? '#f59e0b',
+          ok: ex.colors?.ok ?? '#16a34a',
+          nodata: ex.colors?.nodata ?? '#9ca3af',
+        };
+        const shapesUsed = new Set<PointShape>(ex.batches.map((b) => b.shape));
+        shapesUsed.add('circle');
+        for (const sh of shapesUsed) {
+          for (const lvl of ['alert', 'warn', 'ok', 'nodata']) {
+            ensurePointIcon(map, sh, levelColor[lvl], exStroke);
+          }
+        }
+        const levelExpr = (sh: PointShape): maplibregl.ExpressionSpecification =>
+          (['match', ['get', '__exLevel'],
+            'alert', pointIconId(sh, levelColor.alert, exStroke),
+            'warn', pointIconId(sh, levelColor.warn, exStroke),
+            'ok', pointIconId(sh, levelColor.ok, exStroke),
+            pointIconId(sh, levelColor.nodata, exStroke)] as unknown as maplibregl.ExpressionSpecification);
+        iconImage = ex.batches.length > 0
+          ? (['match', ['get', '__batch'],
+              ...ex.batches.flatMap((b) => [b.name, levelExpr(b.shape)]),
+              levelExpr('circle')] as unknown as maplibregl.ExpressionSpecification)
+          : levelExpr('circle');
+      } else {
+        const sh = layer.pointShape ?? 'circle';
+        const strokeCol = strokeOn ? stroke : 'rgba(0,0,0,0)';
+        const strokeWpx = strokeOn ? Math.max(strokeW, 1) * 2 : 0;
+        iconImage = ensurePointIcon(map, sh, layer.color, strokeCol, strokeWpx);
+      }
+      const iconSize = (pointR * 2) / (SHAPE_IMG_SIZE * SHAPE_DRAW_RATIO);
+      if (!map.getLayer(pointSymId(layer.id))) {
+        map.addLayer({
+          id: pointSymId(layer.id),
+          type: 'symbol',
+          source: srcId,
+          filter: pointFilter,
+          layout: {
+            'icon-image': iconImage,
+            'icon-size': iconSize,
+            'icon-allow-overlap': true,
+            'icon-ignore-placement': true,
+            visibility,
+          },
+          paint: {
+            'icon-opacity': layer.opacity,
+          },
+        });
+      } else {
+        map.setFilter(pointSymId(layer.id), pointFilter);
+        map.setLayoutProperty(pointSymId(layer.id), 'icon-image', iconImage);
+        map.setLayoutProperty(pointSymId(layer.id), 'icon-size', iconSize);
+        map.setLayoutProperty(pointSymId(layer.id), 'visibility', visibility);
+        map.setPaintProperty(pointSymId(layer.id), 'icon-opacity', layer.opacity);
+      }
     } else {
-      map.setFilter(pointId(layer.id), pointFilter);
-      map.setPaintProperty(pointId(layer.id), 'circle-color', layer.color);
-      map.setPaintProperty(pointId(layer.id), 'circle-opacity', layer.opacity);
-      map.setPaintProperty(pointId(layer.id), 'circle-radius', pointR);
-      map.setPaintProperty(pointId(layer.id), 'circle-stroke-color', stroke);
-      map.setPaintProperty(pointId(layer.id), 'circle-stroke-width', pointStrokeW);
-      map.setLayoutProperty(pointId(layer.id), 'visibility', visibility);
+      if (map.getLayer(pointSymId(layer.id))) map.removeLayer(pointSymId(layer.id));
+      if (!map.getLayer(pointId(layer.id))) {
+        map.addLayer({
+          id: pointId(layer.id),
+          type: 'circle',
+          source: srcId,
+          filter: pointFilter,
+          paint: {
+            'circle-color': circleColor,
+            'circle-opacity': layer.opacity,
+            'circle-radius': pointR,
+            'circle-stroke-color': stroke,
+            'circle-stroke-width': pointStrokeW,
+          },
+          layout: { visibility },
+        });
+      } else {
+        map.setFilter(pointId(layer.id), pointFilter);
+        map.setPaintProperty(pointId(layer.id), 'circle-color', circleColor);
+        map.setPaintProperty(pointId(layer.id), 'circle-opacity', layer.opacity);
+        map.setPaintProperty(pointId(layer.id), 'circle-radius', pointR);
+        map.setPaintProperty(pointId(layer.id), 'circle-stroke-color', stroke);
+        map.setPaintProperty(pointId(layer.id), 'circle-stroke-width', pointStrokeW);
+        map.setLayoutProperty(pointId(layer.id), 'visibility', visibility);
+      }
     }
 
     if (!map.getLayer(labelId(layer.id))) {
@@ -520,7 +618,7 @@ function syncLayers(map: MLMap, layers: VectorLayer[]) {
 
   for (let i = layers.length - 1; i >= 0; i--) {
     const l = layers[i];
-    for (const id of [fillId(l.id), lineId(l.id), pointId(l.id), labelId(l.id)]) {
+    for (const id of [fillId(l.id), lineId(l.id), pointId(l.id), pointSymId(l.id), labelId(l.id)]) {
       if (map.getLayer(id)) {
         try { map.moveLayer(id); } catch { /* noop */ }
       }

@@ -1,21 +1,24 @@
 ---
 name: gis-add-attr-tab
-description: Add a new attribute table tab (like 水文監測 already exists; placeholders are 地下水濃度監測 / 土壤濃度監測 / 土壤氣體濃度監測 / 土壤氣體濃度快篩 / 其他). Sets up the per-feature data store, header bar, table layout, optional contour-generation pipeline, and persistence. Use when user says "新增 XXX 監測分頁" or "把 OOO 分頁從佔位變成實際功能".
+description: Add a new attribute table tab. Implemented tabs = 水文監測 / 地下水濃度監測 / 土壤濃度監測; remaining disabled placeholders = 土壤氣體濃度監測 / 土壤氣體濃度快篩 / 其他. Sets up the per-feature data store, header bar, table layout, optional generation pipeline (contour OR point-exceedance), and persistence. Use when user says "新增 XXX 監測分頁" or "把 OOO 分頁從佔位變成實際功能".
 ---
 
 # 新增屬性表分頁
 
-GIS 屬性表目前有「主屬性表」+「水文監測」兩個 tab，外加 4 個 disabled 佔位。要把佔位變成實作（或全新 tab），照這個流程做。
+GIS 屬性表已實作「主屬性表 / 水文監測 / 地下水濃度監測 / 土壤濃度監測」，外加 3 個 disabled 佔位（土壤氣體濃度監測 / 快篩 / 其他）。要把佔位變成實作（或全新 tab），照這個流程做。
 
 ## 前置決策（先問使用者）
 
 1. **資料形狀**：每筆 feature 上要存什麼？
    - 水文監測的範本：`properties.__hydro = { '日期': 量測深度 }`
-   - 濃度類分頁可能是：`properties.__gwConc = { '日期': { '物質名': 濃度 } }`（多物質）或 `properties.__gwConc = { '日期': 濃度 }`（單物質）
+   - 濃度類分頁（有日期+內插）：`properties.__gwConc = { tabId: { subId: { '日期': 濃度 } } }`
+   - 濃度類分頁（無日期，分批）：`properties.__soilConc = { tabId: { subId: 濃度 } }`，批次走 feature 屬性 `批次名稱`
    - 鍵名前綴 `__` 開頭，避免跟使用者屬性混淆
-2. **是否要日期維度**：水文監測和濃度監測都需要；快篩可能單次採樣不需要
-3. **是否要產生等水位線/濃度面**：濃度監測通常需要（複用等水位線 pipeline，把 `高程 - 深度` 換成「濃度」）
-4. **單位**：濃度 mg/L、氣體濃度 ppm 等 — 影響 hint 文字
+2. **是否要日期維度**：水文/地下水監測需要；**土壤/氣體類採樣具破壞性、單次採樣 → 不要日期**，改用「批次」分組（見下）
+3. **要產生哪種圖層？兩條 pipeline 二選一**：
+   - **等值線（內插）** → 走 [gis-multi-variant-contour-layer]，適合地下水位/濃度（連續面）
+   - **點位超標圖（非內插，逐點分級著色 + 每批不同形狀）** → 走 **[gis-point-exceedance-layer]**，適合土壤/氣體（破壞性採樣、分批、無時間序列）
+4. **單位**：濃度 mg/L、土壤 mg/kg、氣體 ppm 等 — 影響 hint 文字
 
 ## Step 1 — 擴充類型
 

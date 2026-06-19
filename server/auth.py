@@ -39,8 +39,12 @@ def verify_google_credential(credential: str) -> dict:
     from google.auth.transport import requests as g_requests
     from google.oauth2 import id_token as google_id_token
 
+    # clock_skew_in_seconds tolerance is REQUIRED: google-auth defaults to 0, so if
+    # this server's clock lags Google's issuing clock by even ~1s, a freshly-minted
+    # token's `iat`/`nbf` is "in the future" and verify raises "Token used too early".
+    # That makes logins fail intermittently near second boundaries. Allow a small skew.
     info = google_id_token.verify_oauth2_token(
-        credential, g_requests.Request(), GOOGLE_CLIENT_ID
+        credential, g_requests.Request(), GOOGLE_CLIENT_ID, clock_skew_in_seconds=30
     )
     if info.get("iss") not in ("accounts.google.com", "https://accounts.google.com"):
         raise ValueError("invalid issuer")

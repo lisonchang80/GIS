@@ -134,3 +134,81 @@ def delete_project(uid: int) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+# ---- multi-project (explicit ids, all scoped to the owner) ----
+def list_projects(uid: int):
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT id, name, updated_at FROM projects WHERE user_id = ? ORDER BY updated_at DESC",
+            (uid,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def create_project(uid: int, name: str = "未命名專案"):
+    conn = get_conn()
+    try:
+        ts = now_iso()
+        cur = conn.execute(
+            "INSERT INTO projects (user_id, name, version, data, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (uid, name, 1, "", ts, ts),
+        )
+        conn.commit()
+        return {"id": cur.lastrowid, "name": name, "updated_at": ts}
+    finally:
+        conn.close()
+
+
+def get_project_by_id(uid: int, pid: int):
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT * FROM projects WHERE id = ? AND user_id = ?", (pid, uid)
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def update_project_by_id(uid: int, pid: int, version: int, data_json: str, name: str):
+    conn = get_conn()
+    try:
+        ts = now_iso()
+        cur = conn.execute(
+            "UPDATE projects SET version=?, data=?, name=?, updated_at=? WHERE id=? AND user_id=?",
+            (version, data_json, name, ts, pid, uid),
+        )
+        conn.commit()
+        return cur.rowcount > 0, ts
+    finally:
+        conn.close()
+
+
+def rename_project_by_id(uid: int, pid: int, name: str) -> bool:
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            "UPDATE projects SET name=?, updated_at=? WHERE id=? AND user_id=?",
+            (name, now_iso(), pid, uid),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def delete_project_by_id(uid: int, pid: int) -> bool:
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            "DELETE FROM projects WHERE id = ? AND user_id = ?", (pid, uid)
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()

@@ -103,3 +103,60 @@ async def put_project_route(request: Request, uid: int = Depends(current_uid)):
 def delete_project_route(uid: int = Depends(current_uid)):
     db.delete_project(uid)
     return {"ok": True}
+
+
+# ---- multi-project (explicit ids) ----
+class CreateProjectBody(BaseModel):
+    name: str | None = None
+
+
+class RenameBody(BaseModel):
+    name: str
+
+
+@router.get("/projects")
+def list_projects_route(uid: int = Depends(current_uid)):
+    return db.list_projects(uid)
+
+
+@router.post("/projects")
+def create_project_route(body: CreateProjectBody, uid: int = Depends(current_uid)):
+    return db.create_project(uid, body.name or "未命名專案")
+
+
+@router.get("/projects/{pid}")
+def get_project_by_id_route(pid: int, uid: int = Depends(current_uid)):
+    row = db.get_project_by_id(uid, pid)
+    if not row:
+        raise HTTPException(status_code=404, detail="not found")
+    if not row["data"]:
+        return Response(status_code=204)
+    return JSONResponse(content=json.loads(row["data"]))
+
+
+@router.put("/projects/{pid}")
+async def put_project_by_id_route(pid: int, request: Request, uid: int = Depends(current_uid)):
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="payload must be an object")
+    version = int(payload.get("version", 1))
+    name = payload.get("projectName") or "未命名專案"
+    ok, ts = db.update_project_by_id(
+        uid, pid, version, json.dumps(payload, ensure_ascii=False), name
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="not found")
+    return {"savedAt": ts}
+
+
+@router.patch("/projects/{pid}")
+def rename_project_route(pid: int, body: RenameBody, uid: int = Depends(current_uid)):
+    if not db.rename_project_by_id(uid, pid, body.name):
+        raise HTTPException(status_code=404, detail="not found")
+    return {"ok": True}
+
+
+@router.delete("/projects/{pid}")
+def delete_project_by_id_route(pid: int, uid: int = Depends(current_uid)):
+    db.delete_project_by_id(uid, pid)
+    return {"ok": True}

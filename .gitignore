@@ -12,6 +12,13 @@ dist
 dist-ssr
 *.local
 
+# Backend (FastAPI + SQLite)
+server/.venv
+server/__pycache__
+server/gis.db
+server/.env
+.env.local
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

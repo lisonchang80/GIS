@@ -19,6 +19,9 @@ server/gis.db
 server/.env
 .env.local
 
+# Deploy secrets (filled locally, never committed)
+packaging/env.local.bat
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

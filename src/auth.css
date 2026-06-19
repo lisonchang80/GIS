@@ -1,0 +1,127 @@
+.login-screen {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 50% 30%, #1e293b 0%, #0f172a 70%);
+  color: #e2e8f0;
+  z-index: 9999;
+}
+
+.login-spinner {
+  font-size: 14px;
+  opacity: 0.8;
+}
+
+.login-card {
+  width: 340px;
+  max-width: calc(100vw - 32px);
+  padding: 32px 28px;
+  border-radius: 16px;
+  background: #0b1220;
+  border: 1px solid #1e293b;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.login-logo {
+  font-size: 40px;
+  line-height: 1;
+}
+
+.login-title {
+  margin: 4px 0 0;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.login-sub {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  opacity: 0.75;
+}
+
+.login-gbtn {
+  min-height: 40px;
+  display: flex;
+  justify-content: center;
+}
+
+.login-warn {
+  font-size: 12px;
+  color: #fbbf24;
+  margin: 4px 0;
+}
+
+.login-dev-btn {
+  margin-top: 6px;
+  padding: 8px 16px;
+  font-size: 13px;
+  border-radius: 8px;
+  border: 1px dashed #475569;
+  background: transparent;
+  color: #cbd5e1;
+  cursor: pointer;
+}
+
+.login-dev-btn:hover {
+  background: #1e293b;
+}
+
+.login-error {
+  font-size: 12px;
+  color: #f87171;
+  margin: 4px 0 0;
+}
+
+/* logged-in badge, bottom-left, low-profile so it stays out of the map UI */
+.auth-badge {
+  position: fixed;
+  left: 10px;
+  bottom: 10px;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px 4px 4px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  color: #e2e8f0;
+  font-size: 12px;
+  backdrop-filter: blur(4px);
+}
+
+.auth-badge-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+}
+
+.auth-badge-name {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.auth-badge-logout {
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: transparent;
+  color: #cbd5e1;
+  cursor: pointer;
+}
+
+.auth-badge-logout:hover {
+  background: rgba(148, 163, 184, 0.2);
+}

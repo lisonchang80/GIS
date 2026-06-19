@@ -1,4 +1,3 @@
-import { get, set, del } from 'idb-keyval';
 import type { GeoJSONStoreFeatures } from 'terra-draw';
 import type { BaseMapId, VectorLayer } from './types';
 
@@ -28,12 +27,21 @@ export interface ProjectState extends ProjectPayload {
   savedAt: string;
 }
 
+// Project storage now lives on the backend (per Google-authenticated user),
+// reached via the same-origin /api/project endpoints. The cookie set at login
+// carries the identity, so every call uses credentials: 'include'.
+
 export async function loadProject(): Promise<ProjectState | null> {
   try {
-    const data = await get<ProjectState>(PROJECT_KEY);
-    if (!data) return null;
-    if (data.version !== PROJECT_VERSION) {
-      console.warn(`Ignoring project with incompatible version: ${data.version}`);
+    const r = await fetch('/api/project', { credentials: 'include' });
+    if (r.status === 401 || r.status === 204) return null;
+    if (!r.ok) {
+      console.warn('loadProject failed', r.status);
+      return null;
+    }
+    const data = (await r.json()) as ProjectState;
+    if (!data || data.version !== PROJECT_VERSION) {
+      if (data) console.warn(`Ignoring project with incompatible version: ${data.version}`);
       return null;
     }
     return data;
@@ -49,11 +57,18 @@ export async function saveProject(payload: ProjectPayload): Promise<void> {
     version: PROJECT_VERSION,
     savedAt: new Date().toISOString(),
   };
-  await set(PROJECT_KEY, full);
+  const r = await fetch('/api/project', {
+    method: 'PUT',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(full),
+  });
+  if (!r.ok) throw new Error(`saveProject failed: ${r.status}`);
 }
 
 export async function clearProject(): Promise<void> {
-  await del(PROJECT_KEY);
+  const r = await fetch('/api/project', { method: 'DELETE', credentials: 'include' });
+  if (!r.ok && r.status !== 401) throw new Error(`clearProject failed: ${r.status}`);
 }
 
 export function downloadProject(payload: ProjectPayload): void {

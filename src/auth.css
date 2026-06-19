@@ -81,47 +81,59 @@
   margin: 4px 0 0;
 }
 
-/* logged-in badge, bottom-left, low-profile so it stays out of the map UI */
-.auth-badge {
-  position: fixed;
-  left: 10px;
-  bottom: 10px;
-  z-index: 900;
+/* logged-in user chip, integrated into the panel header (top of left panel) */
+.panel-header-top {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
-  padding: 4px 8px 4px 4px;
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.85);
-  border: 1px solid rgba(148, 163, 184, 0.3);
-  color: #e2e8f0;
-  font-size: 12px;
-  backdrop-filter: blur(4px);
 }
 
-.auth-badge-avatar {
-  width: 22px;
-  height: 22px;
+.panel-user {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.panel-user-avatar {
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
+  flex: 0 0 auto;
+  object-fit: cover;
 }
 
-.auth-badge-name {
-  max-width: 140px;
+.panel-user-avatar-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #334155;
+  color: #e2e8f0;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.panel-user-name {
+  max-width: 96px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.auth-badge-logout {
-  padding: 2px 8px;
   font-size: 11px;
-  border-radius: 999px;
-  border: 1px solid rgba(148, 163, 184, 0.4);
-  background: transparent;
-  color: #cbd5e1;
-  cursor: pointer;
+  opacity: 0.8;
 }
 
-.auth-badge-logout:hover {
-  background: rgba(148, 163, 184, 0.2);
+.panel-user-logout {
+  padding: 2px 7px;
+  font-size: 11px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #d1d5db);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.panel-user-logout:hover {
+  background: rgba(148, 163, 184, 0.18);
 }

@@ -2,6 +2,7 @@ import { useRef, useState, type ReactNode } from 'react';
 import type { BaseMapId, BaseMapOption, VectorLayer } from './types';
 import { LayerItem } from './LayerItem';
 import { CollapsibleSection } from './CollapsibleSection';
+import { useAuth } from './authContext';
 
 interface Props {
   basemaps: BaseMapOption[];
@@ -31,6 +32,7 @@ interface Props {
 }
 
 export function LayerPanel(p: Props) {
+  const auth = useAuth();
   const fileRef = useRef<HTMLInputElement>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
@@ -51,7 +53,24 @@ export function LayerPanel(p: Props) {
   return (
     <aside className="panel">
       <div className="panel-section panel-header">
-        <h1 className="panel-title">Web GIS</h1>
+        <div className="panel-header-top">
+          <h1 className="panel-title">Web GIS</h1>
+          {auth && (
+            <div className="panel-user" title={auth.user.email}>
+              {auth.user.picture ? (
+                <img src={auth.user.picture} alt="" className="panel-user-avatar" />
+              ) : (
+                <span className="panel-user-avatar panel-user-avatar-fallback">
+                  {(auth.user.name || auth.user.email || '?').slice(0, 1).toUpperCase()}
+                </span>
+              )}
+              <span className="panel-user-name">{auth.user.name || auth.user.email}</span>
+              <button className="panel-user-logout" onClick={auth.logout} title="登出">
+                登出
+              </button>
+            </div>
+          )}
+        </div>
         <input
           type="text"
           className="project-name-input"

@@ -7,6 +7,7 @@ import {
   logout,
   type AuthUser,
 } from './auth';
+import { AuthProvider } from './authContext';
 import './auth.css';
 
 // Minimal typing for the Google Identity Services global.
@@ -110,18 +111,7 @@ export function LoginGate({ children }: { children: React.ReactNode }) {
   }
 
   if (phase === 'authed' && user) {
-    return (
-      <>
-        {children}
-        <div className="auth-badge">
-          {user.picture ? <img src={user.picture} alt="" className="auth-badge-avatar" /> : null}
-          <span className="auth-badge-name">{user.name || user.email}</span>
-          <button className="auth-badge-logout" onClick={handleLogout} title="登出">
-            登出
-          </button>
-        </div>
-      </>
-    );
+    return <AuthProvider value={{ user, logout: handleLogout }}>{children}</AuthProvider>;
   }
 
   return (

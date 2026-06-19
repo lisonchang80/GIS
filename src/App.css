@@ -530,6 +530,23 @@ body,
   border: 1px solid var(--danger);
 }
 
+.project-switch-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.project-switch-row .project-select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.project-switch-row .btn.sm {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+}
+
 .project-actions {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;

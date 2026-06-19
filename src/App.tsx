@@ -19,16 +19,21 @@ import { detectKind, ensureNames, fileToGeoJSON, geometryBounds } from './import
 import { syncAllContours, syncContoursForSource, syncSingleContour } from './contour';
 import { syncAllExceedance, syncExceedanceForSource } from './exceedance';
 import {
-  clearProject,
+  createProject,
+  deleteProject,
   downloadProject,
   importProjectFile,
+  listProjects,
   loadProject,
   saveProject,
+  type ProjectMeta,
+  type ProjectPayload,
   type ProjectState,
 } from './persistence';
 import './App.css';
 
 const PALETTE = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
+const CURRENT_PROJECT_KEY = 'gis-current-project-id';
 const DEFAULT_BASEMAP: BaseMapId = 'satellite-google';
 const TERRA_DRAW_INTERNAL_KEYS = new Set(['mode', 'selected', 'midPoint', 'midPointFeature']);
 
@@ -76,6 +81,8 @@ export default function App() {
   const [stylePopoverLayerId, setStylePopoverLayerId] = useState<string | null>(null);
   const [pickingCoords, setPickingCoords] = useState<{ layerId: string; featureIndex: number } | null>(null);
   const [addPointTarget, setAddPointTarget] = useState<string | null>(null);
+  const [projects, setProjects] = useState<ProjectMeta[]>([]);
+  const [currentProjectId, setCurrentProjectId] = useState<number | null>(null);
 
   const toggleAttributes = useCallback((id: string) => {
     setAttributesLayerId((prev) => (prev === id ? null : id));
@@ -95,7 +102,20 @@ export default function App() {
   const basemap = BASEMAPS.find((b) => b.id === basemapId) ?? BASEMAPS[0];
 
   useEffect(() => {
-    loadProject().then((project) => {
+    (async () => {
+      let list = await listProjects();
+      if (list.length === 0) {
+        const created = await createProject('未命名專案');
+        if (created) list = [created];
+      }
+      let chosenId: number | null = null;
+      let project: ProjectState | null = null;
+      if (list.length > 0) {
+        const savedId = Number(localStorage.getItem(CURRENT_PROJECT_KEY));
+        const chosen = list.find((p) => p.id === savedId) ?? list[0];
+        chosenId = chosen.id;
+        project = await loadProject(chosen.id);
+      }
       if (project) {
         setBasemapId(project.basemapId);
         const base = BASEMAPS.find((b) => b.id === project.basemapId);
@@ -106,13 +126,16 @@ export default function App() {
         setLayers(syncAllExceedance(syncAllContours(project.layers.map((l) => ({ ...l, data: ensureNames(l.data) })))));
         if (typeof project.colorCursor === 'number') colorCursor.current = project.colorCursor;
         pendingProjectRef.current = project;
-        setSavedAt(new Date(project.savedAt));
+        setSavedAt(project.savedAt ? new Date(project.savedAt) : null);
       } else {
         const base = BASEMAPS.find((b) => b.id === DEFAULT_BASEMAP);
         if (base) setBasemapVersionIndex(basemapDefaultVersionIndex(base));
       }
+      setProjects(list);
+      setCurrentProjectId(chosenId);
+      if (chosenId != null) localStorage.setItem(CURRENT_PROJECT_KEY, String(chosenId));
       setInitialized(true);
-    });
+    })();
   }, []);
 
   const applyPendingMapView = useCallback(() => {
@@ -135,6 +158,79 @@ export default function App() {
     drawingsAppliedRef.current = true;
     setDrawCount(draw.getSnapshot().length);
   }, []);
+
+  // Apply a loaded (or null = empty) project to all state. Used for project
+  // switch / new / import / clear — refs are ready by then, so drawings and
+  // map view are applied directly (the mount path uses the pending-ref dance).
+  const applyProject = useCallback((project: ProjectState | null) => {
+    if (project) {
+      setBasemapId(project.basemapId);
+      const base = BASEMAPS.find((b) => b.id === project.basemapId);
+      const defaultIdx = base ? basemapDefaultVersionIndex(base) : 0;
+      setBasemapVersionIndex(project.basemapVersionIndex ?? defaultIdx);
+      setBasemapOpacity(project.basemapOpacity ?? 1);
+      setProjectName(project.projectName ?? '未命名專案');
+      setLayers(syncAllExceedance(syncAllContours(project.layers.map((l) => ({ ...l, data: ensureNames(l.data) })))));
+      colorCursor.current = typeof project.colorCursor === 'number' ? project.colorCursor : 0;
+      setSavedAt(project.savedAt ? new Date(project.savedAt) : null);
+    } else {
+      setBasemapId(DEFAULT_BASEMAP);
+      const base = BASEMAPS.find((b) => b.id === DEFAULT_BASEMAP);
+      setBasemapVersionIndex(base ? basemapDefaultVersionIndex(base) : 0);
+      setBasemapOpacity(1);
+      setProjectName('未命名專案');
+      setLayers([]);
+      colorCursor.current = 0;
+      setSavedAt(null);
+    }
+    setAttributesLayerId(null);
+    setStylePopoverLayerId(null);
+    setPickingCoords(null);
+    setAddPointTarget(null);
+    setDrawMode('static');
+    pendingProjectRef.current = project;
+    mapViewAppliedRef.current = false;
+    drawingsAppliedRef.current = false;
+    const draw = drawRef.current;
+    if (draw) {
+      try {
+        draw.clear();
+      } catch {
+        /* noop */
+      }
+      if (project?.drawings && project.drawings.length > 0) {
+        try {
+          draw.addFeatures(project.drawings);
+        } catch (e) {
+          console.warn('apply drawings failed', e);
+        }
+      }
+      drawingsAppliedRef.current = true;
+      setDrawCount(draw.getSnapshot().length);
+    }
+    const map = mapRef.current;
+    if (map && project?.mapView) {
+      map.jumpTo({ center: project.mapView.center, zoom: project.mapView.zoom });
+      mapViewAppliedRef.current = true;
+    }
+  }, []);
+
+  const buildPayload = useCallback((): ProjectPayload => {
+    const draw = drawRef.current;
+    const map = mapRef.current;
+    return {
+      basemapId,
+      basemapVersionIndex,
+      basemapOpacity,
+      projectName,
+      layers,
+      drawings: draw?.getSnapshot() ?? [],
+      mapView: map
+        ? { center: [map.getCenter().lng, map.getCenter().lat] as [number, number], zoom: map.getZoom() }
+        : undefined,
+      colorCursor: colorCursor.current,
+    };
+  }, [basemapId, basemapVersionIndex, basemapOpacity, projectName, layers]);
 
   const handleMapReady = useCallback(
     (map: MLMap) => {
@@ -171,32 +267,31 @@ export default function App() {
   }, [drawMode]);
 
   useEffect(() => {
-    if (!initialized) return;
+    if (!initialized || currentProjectId == null) return;
+    const pid = currentProjectId;
     const handle = setTimeout(() => {
-      const draw = drawRef.current;
-      const map = mapRef.current;
-      const drawings = draw?.getSnapshot() ?? [];
-      const mapView = map
-        ? {
-            center: [map.getCenter().lng, map.getCenter().lat] as [number, number],
-            zoom: map.getZoom(),
-          }
-        : undefined;
-      saveProject({
-        basemapId,
-        basemapVersionIndex,
-        basemapOpacity,
-        projectName,
-        layers,
-        drawings,
-        mapView,
-        colorCursor: colorCursor.current,
-      })
-        .then(() => setSavedAt(new Date()))
+      saveProject(pid, buildPayload())
+        .then(() => {
+          setSavedAt(new Date());
+          setProjects((prev) =>
+            prev.map((p) => (p.id === pid ? { ...p, name: projectName || p.name } : p)),
+          );
+        })
         .catch((e) => console.warn('saveProject failed', e));
     }, 500);
     return () => clearTimeout(handle);
-  }, [initialized, basemapId, basemapVersionIndex, basemapOpacity, projectName, layers, drawCount, mapMoveTick]);
+  }, [
+    initialized,
+    currentProjectId,
+    basemapId,
+    basemapVersionIndex,
+    basemapOpacity,
+    projectName,
+    layers,
+    drawCount,
+    mapMoveTick,
+    buildPayload,
+  ]);
 
   const handleBasemapChange = useCallback((id: BaseMapId) => {
     setBasemapId(id);
@@ -443,53 +538,14 @@ export default function App() {
   };
 
   const handleExportProject = () => {
-    const draw = drawRef.current;
-    const map = mapRef.current;
-    const drawings = draw?.getSnapshot() ?? [];
-    const mapView = map
-      ? {
-          center: [map.getCenter().lng, map.getCenter().lat] as [number, number],
-          zoom: map.getZoom(),
-        }
-      : undefined;
-    downloadProject({
-      basemapId,
-      layers,
-      drawings,
-      mapView,
-      colorCursor: colorCursor.current,
-    });
+    downloadProject(buildPayload());
   };
 
   const handleImportProject = async (file: File) => {
     setError(null);
     try {
       const project = await importProjectFile(file);
-      setBasemapId(project.basemapId);
-      const base = BASEMAPS.find((b) => b.id === project.basemapId);
-      const defaultIdx = base ? basemapDefaultVersionIndex(base) : 0;
-      setBasemapVersionIndex(project.basemapVersionIndex ?? defaultIdx);
-      setBasemapOpacity(project.basemapOpacity ?? 1);
-      setProjectName(project.projectName ?? '未命名專案');
-      setLayers(syncAllContours(project.layers.map((l) => ({ ...l, data: ensureNames(l.data) }))));
-      colorCursor.current = project.colorCursor ?? 0;
-      if (project.mapView && mapRef.current) {
-        mapRef.current.jumpTo({
-          center: project.mapView.center,
-          zoom: project.mapView.zoom,
-        });
-      }
-      if (drawRef.current) {
-        drawRef.current.clear();
-        if (project.drawings && project.drawings.length > 0) {
-          try {
-            drawRef.current.addFeatures(project.drawings);
-          } catch (e) {
-            console.warn('import drawings failed', e);
-          }
-        }
-        setDrawCount(drawRef.current.getSnapshot().length);
-      }
+      applyProject(project);
     } catch (e) {
       setError(`匯入失敗: ${(e as Error).message}`);
     }
@@ -654,20 +710,66 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [pickingCoords, addPointTarget]);
 
-  const handleClearProject = async () => {
-    if (!window.confirm('確定要清除瀏覽器內的存檔嗎？\n目前畫面上的圖層與繪製也會被清空。')) return;
-    await clearProject();
-    setBasemapId(DEFAULT_BASEMAP);
-    const base = BASEMAPS.find((b) => b.id === DEFAULT_BASEMAP);
-    if (base) setBasemapVersionIndex(basemapDefaultVersionIndex(base));
-    setBasemapOpacity(1);
-    setProjectName('未命名專案');
-    setLayers([]);
-    colorCursor.current = 0;
-    drawRef.current?.clear();
-    setDrawMode('static');
-    setSavedAt(null);
+  const handleClearProject = () => {
+    if (!window.confirm('確定清空目前專案的內容嗎？\n圖層與繪製會被清除（專案本身會保留）。')) return;
+    applyProject(null);
   };
+
+  const handleSwitchProject = useCallback(
+    async (id: number) => {
+      if (id === currentProjectId) return;
+      if (currentProjectId != null) {
+        try {
+          await saveProject(currentProjectId, buildPayload());
+        } catch (e) {
+          console.warn('save before switch failed', e);
+        }
+      }
+      localStorage.setItem(CURRENT_PROJECT_KEY, String(id));
+      setCurrentProjectId(id);
+      const project = await loadProject(id);
+      applyProject(project);
+      setProjects(await listProjects());
+    },
+    [currentProjectId, buildPayload, applyProject],
+  );
+
+  const handleNewProject = useCallback(async () => {
+    if (currentProjectId != null) {
+      try {
+        await saveProject(currentProjectId, buildPayload());
+      } catch (e) {
+        console.warn('save before new failed', e);
+      }
+    }
+    const created = await createProject('未命名專案');
+    if (!created) return;
+    localStorage.setItem(CURRENT_PROJECT_KEY, String(created.id));
+    setCurrentProjectId(created.id);
+    applyProject(null);
+    setProjects(await listProjects());
+  }, [currentProjectId, buildPayload, applyProject]);
+
+  const handleDeleteProject = useCallback(async () => {
+    if (currentProjectId == null) return;
+    if (!window.confirm('確定刪除目前專案？此動作無法復原。')) return;
+    await deleteProject(currentProjectId);
+    let list = await listProjects();
+    if (list.length === 0) {
+      const created = await createProject('未命名專案');
+      if (created) list = [created];
+    }
+    const next = list[0] ?? null;
+    setProjects(list);
+    setCurrentProjectId(next?.id ?? null);
+    if (next) {
+      localStorage.setItem(CURRENT_PROJECT_KEY, String(next.id));
+      applyProject(await loadProject(next.id));
+    } else {
+      localStorage.removeItem(CURRENT_PROJECT_KEY);
+      applyProject(null);
+    }
+  }, [currentProjectId, applyProject]);
 
   if (!initialized) {
     return (
@@ -705,6 +807,11 @@ export default function App() {
         beforeBasemap={
           <ProjectBar
             savedAt={savedAt}
+            projects={projects}
+            currentProjectId={currentProjectId}
+            onSwitch={handleSwitchProject}
+            onNew={handleNewProject}
+            onDelete={handleDeleteProject}
             onExport={handleExportProject}
             onImport={handleImportProject}
             onClear={handleClearProject}

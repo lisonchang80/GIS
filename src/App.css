@@ -1807,6 +1807,41 @@ body,
   color: var(--muted);
 }
 
+/* 土壤污染調查（垂向多深度） */
+.cell-input.soil-survey-num {
+  width: 72px;
+}
+.soil-survey-table th.hydro-date-th {
+  min-width: 60px;
+}
+.soil-survey-area-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--panel-2);
+  font-size: 11px;
+}
+.soil-survey-area-title {
+  font-weight: 600;
+  color: var(--text);
+}
+.soil-survey-area-chip {
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-family: ui-monospace, Consolas, monospace;
+}
+.soil-survey-vol {
+  margin-left: auto;
+  font-weight: 600;
+  color: #86efac;
+}
+
 .hydro-legend-inline {
   display: inline-flex;
   align-items: center;

@@ -72,13 +72,14 @@ export interface VectorLayer {
   hydroDates?: string[];
   gwConcTabs?: GwConcTab[];
   soilConcTabs?: SoilConcTab[];
+  soilSurveyTabs?: SoilSurveyTab[];
   exceedance?: ExceedanceConfig;
   waterLevel?: {
     dates: string[];
     activeDate: string;
     sourceLayerId?: string;
     model?: 'idw' | 'tin' | 'kriging' | 'indicator';
-    sourceKind?: 'hydro' | 'gw-conc';
+    sourceKind?: 'hydro' | 'gw-conc' | 'soil-survey';
     sourceTabId?: string;
     sourceSubId?: string;
     substances?: Array<{ id: string; name: string }>;
@@ -134,6 +135,23 @@ export interface SoilConcTab {
   landUse?: SoilLandUse; // 用地類別，影響新增物質時帶入的標準預設值
   substances: GwConcSubstance[];
   activeBatch?: string; // 編輯表格目前聚焦的批次
+}
+
+// 土壤污染調查：與土壤濃度監測相似，但「批次」維度換成「深度」維度。
+// 一次性採樣（無批次、無時間），每個點位在固定深度層（0 / 0.5 / … / maxDepth）各採一筆。
+// 採樣值存 properties.__soilSurvey[tabId][subId][depthKey]，depthKey = 深度字串（'0'、'0.5'…）。
+// 高程沿用既有 `高程` 屬性（預設 0），實際採樣高程 = 高程 − 深度（供 3D 用）。
+export interface SoilSurveyTab {
+  id: string;
+  label?: string;
+  landUse?: SoilLandUse; // 用地類別，影響新增物質時帶入的標準預設值
+  substances: GwConcSubstance[];
+  depthInterval?: number; // 採樣深度間隔，預設 0.5（m）
+  maxDepth?: number; // 最深採樣深度，預設 4.0（m）
+  activeSubstance?: string;
+  activeDepth?: number; // 目前聚焦的深度層
+  threshold?: number; // 等濃度線閾值，閾值以上計算面積/體積，預設 0
+  model?: 'idw' | 'tin' | 'kriging';
 }
 
 export type ExceedanceLevel = 'alert' | 'warn' | 'ok' | 'nodata';

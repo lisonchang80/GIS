@@ -723,6 +723,60 @@ export function collectGwConcSamplesForDate(
   return out;
 }
 
+// 土壤污染調查：取某物質在某「深度層」（depthKey 為深度字串）的所有點位濃度。
+// 把「深度」當成 contour pipeline 的 date 字串，等值線渲染/過濾完全沿用既有路徑。
+export function collectSoilSurveySamplesForDepth(
+  layer: VectorLayer,
+  tabId: string,
+  subId: string,
+  depthKey: string,
+): IDWSample[] {
+  const out: IDWSample[] = [];
+  for (const f of layer.data.features) {
+    if (f.geometry?.type !== 'Point') continue;
+    const props = (f.properties ?? {}) as Record<string, unknown>;
+    const survey = props['__soilSurvey'] as
+      | Record<string, Record<string, Record<string, unknown>>>
+      | undefined;
+    const v = survey?.[tabId]?.[subId]?.[depthKey];
+    if (typeof v !== 'number' || !Number.isFinite(v)) continue;
+    const [x, y] = f.geometry.coordinates as [number, number];
+    out.push({ x, y, z: v });
+  }
+  return out;
+}
+
+// 閾值以上的面積（m²）：內插出濃度格網 → 取 [閾值, 最大值] 帶 → 加總多邊形面積。
+// 給「土壤污染調查」逐深度層算面積、再 Σ(面積×間隔) 得體積。
+export function areaAboveThreshold(
+  samples: IDWSample[],
+  threshold: number,
+  model?: ContourModel,
+  opts: ContourOptions = {},
+  gridCells = 50,
+): number {
+  // indicator 是二值場、不適合算實際面積；退回普通內插。
+  const m: ContourModel | undefined = model === 'indicator' ? 'idw' : model;
+  const built = buildIDWGrid(samples, gridCells, m, opts);
+  if (!built) return 0;
+  const { grid, zMin, zMax } = built;
+  const lower = Math.max(threshold, zMin);
+  if (!(zMax > lower)) return 0;
+  const upper = zMax + Math.max(Math.abs(zMax), 1) * 1e-6;
+  let bands: FeatureCollection;
+  try {
+    bands = turf.isobands(grid, [lower, upper], { zProperty: 'z' }) as FeatureCollection;
+  } catch {
+    return 0;
+  }
+  let area = 0;
+  for (const f of bands.features) {
+    const g = f.geometry;
+    if (g && (g.type === 'Polygon' || g.type === 'MultiPolygon')) area += turf.area(f);
+  }
+  return area;
+}
+
 function rebuildContourLayer(target: VectorLayer, source: VectorLayer): VectorLayer {
   const wl = target.waterLevel!;
   const interval = wl.lines?.majorInterval ?? DEFAULT_LINES.majorInterval;
@@ -733,8 +787,12 @@ function rebuildContourLayer(target: VectorLayer, source: VectorLayer): VectorLa
   };
   const isMultiSub = wl.sourceKind === 'gw-conc' && !!wl.sourceTabId && !!wl.substances && wl.substances.length > 0;
   const isSingleGwConc = wl.sourceKind === 'gw-conc' && !!wl.sourceTabId && !!wl.sourceSubId && !isMultiSub;
+  const isSoilSurvey = wl.sourceKind === 'soil-survey' && !!wl.sourceTabId && !!wl.sourceSubId;
+  // 濃度類（地下水/土壤）不畫流向箭頭。
   const effectiveArrows: WaterLevelArrows | undefined =
-    wl.sourceKind === 'gw-conc' ? (wl.arrows ?? { enabled: false }) : wl.arrows;
+    wl.sourceKind === 'gw-conc' || wl.sourceKind === 'soil-survey'
+      ? (wl.arrows ?? { enabled: false })
+      : wl.arrows;
 
   if (isMultiSub) {
     const tab = source.gwConcTabs?.find((t) => t.id === wl.sourceTabId);
@@ -790,8 +848,10 @@ function rebuildContourLayer(target: VectorLayer, source: VectorLayer): VectorLa
 
   let thresholds: ThresholdLine[] | undefined;
   let singlePrecision: number | undefined;
-  if (isSingleGwConc) {
-    const tab = source.gwConcTabs?.find((t) => t.id === wl.sourceTabId);
+  if (isSingleGwConc || isSoilSurvey) {
+    const tab = isSoilSurvey
+      ? source.soilSurveyTabs?.find((t) => t.id === wl.sourceTabId)
+      : source.gwConcTabs?.find((t) => t.id === wl.sourceTabId);
     const sub = tab?.substances.find((s) => s.id === wl.sourceSubId);
     if (sub) {
       thresholds = [];
@@ -808,13 +868,15 @@ function rebuildContourLayer(target: VectorLayer, source: VectorLayer): VectorLa
   }
   const allFeats: Feature[] = [];
   let plan: BandPlan | null = null;
-  if (wl.fill && wl.fill.mode !== 'none' && !isSingleGwConc) {
+  if (wl.fill && wl.fill.mode !== 'none' && !isSingleGwConc && !isSoilSurvey) {
     const range = getGlobalZRange(source, wl.dates);
     if (range) plan = planBands(range.zMin, range.zMax, wl.fill, interval);
   }
   for (const date of wl.dates) {
     const samples = isSingleGwConc
       ? collectGwConcSamplesForDate(source, wl.sourceTabId!, wl.sourceSubId!, date)
+      : isSoilSurvey
+      ? collectSoilSurveySamplesForDepth(source, wl.sourceTabId!, wl.sourceSubId!, date)
       : undefined;
     const feats = buildContourLayerFeatures(source, date, wl.fill, wl.lines, effectiveArrows, {
       plan: plan ?? undefined,

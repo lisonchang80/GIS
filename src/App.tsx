@@ -349,7 +349,7 @@ export default function App() {
   const updateLayer = useCallback((id: string, patch: Partial<VectorLayer>) => {
     setLayers((prev) => {
       const next = prev.map((l) => (l.id === id ? { ...l, ...patch } : l));
-      if ('data' in patch || 'gwConcTabs' in patch || 'soilConcTabs' in patch) {
+      if ('data' in patch || 'gwConcTabs' in patch || 'soilConcTabs' in patch || 'soilSurveyTabs' in patch) {
         return syncExceedanceForSource(syncContoursForSource(next, id), id);
       }
       if ('waterLevel' in patch) {
@@ -609,6 +609,7 @@ export default function App() {
           if (l.id !== targetId) return l;
           const props: Record<string, unknown> = {};
           if ((l.soilConcTabs?.length ?? 0) > 0) props[SOIL_BATCH_KEY] = '';
+          if ((l.soilSurveyTabs?.length ?? 0) > 0) props['高程'] = 0;
           const feat: Feature = {
             type: 'Feature',
             geometry: { type: 'Point', coordinates: [lng, lat] },

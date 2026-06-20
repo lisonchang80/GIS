@@ -87,11 +87,12 @@ async function renderThree(
 
   const labelH = span * 0.06;
   const off = span * 0.62;
-  const addLabel = (t: string, x: number, y: number, z: number, c?: string) => {
-    const spr = makeLabel(THREE, t, labelH, c);
+  const addLabel = (t: string, x: number, y: number, z: number, c?: string, h = labelH) => {
+    const spr = makeLabel(THREE, t, h, c);
     spr.position.set(x, y, z);
     scene.add(spr);
   };
+  const fmtVol = (a: number) => (a > 0 ? `${Math.round(a * vol.interval).toLocaleString()} m³` : '—');
 
   // 每層在各 layout 下的擺位（mesh 旋轉後 local z→world y(上)，local 平面落在 world XZ）
   const slabPose = (k: number): { tk: number; baseY: number; offX: number; offZ: number } => {
@@ -132,11 +133,14 @@ async function renderThree(
         group.add(mesh);
       }
     }
-    // 分離 / 攤平：每片標深度區間
+    // 分離 / 攤平：每片標深度區間 + 個別體積
     if (layout === 'separate') {
-      addLabel(depthRangeLabel(s.topKey, vol.interval), off, pose.baseY + pose.tk / 2, 0, '#cbd5e1');
+      addLabel(depthRangeLabel(s.topKey, vol.interval), off, pose.baseY + pose.tk / 2 + labelH * 0.7, 0, '#cbd5e1');
+      addLabel(fmtVol(s.area), off, pose.baseY + pose.tk / 2 - labelH * 0.7, 0, '#86efac');
     } else if (layout === 'flat') {
-      addLabel(depthRangeLabel(s.topKey, vol.interval), pose.offX, flatTk + labelH, pose.offZ - cell * 0.42, '#cbd5e1');
+      const fH = labelH * 1.7; // 攤平：字體大些
+      addLabel(depthRangeLabel(s.topKey, vol.interval), pose.offX, flatTk + 1, pose.offZ - cell * 0.40, '#e2e8f0', fH);
+      addLabel(fmtVol(s.area), pose.offX, flatTk + 1, pose.offZ + cell * 0.40, '#86efac', fH);
     }
   });
 
@@ -183,11 +187,15 @@ async function renderThree(
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   if (layout === 'flat') {
+    // 正放俯視、不加旋轉：正上方直視，北（world -Z）朝上，只能平移/縮放
     const target = new THREE.Vector3(0, 0, 0);
     const reach = Math.max(cols, rows) * cell;
-    camera.position.set(0.001, reach * 1.25, 0.001); // 近乎正上方俯視
+    camera.up.set(0, 0, -1);
+    camera.position.set(0, reach * 1.5, 0);
     camera.lookAt(target);
+    camera.updateProjectionMatrix();
     controls.target.copy(target);
+    controls.enableRotate = false;
   } else {
     const vBottom = layout === 'separate' ? n * sepSpacing : vol.maxDepthM * zExag;
     const targetY = -vBottom / 2;
@@ -251,23 +259,7 @@ function buildColorscale(threshold: number, vmax: number, M?: number, C?: number
   return stops;
 }
 
-// 依分級斷點建 opacityscale：閾值透明、濃度越高越不透明（讓紅核穿透綠殼可見）。
-function buildOpacityScale(threshold: number, vmax: number, M?: number, C?: number): [number, number][] {
-  const cmax = Math.max(vmax, threshold + 1e-6);
-  const norm = (v: number) => Math.max(0, Math.min(1, (v - threshold) / (cmax - threshold)));
-  if (!(typeof M === 'number' && typeof C === 'number' && M > 0 && C > M)) {
-    return [[0, 0], [1, 0.85]];
-  }
-  return [
-    [0, 0],
-    [norm(M / 2), 0.05],
-    [norm(M), 0.16],
-    [norm(C), 0.42],
-    [1, 0.9],
-  ];
-}
-
-// ---- (B) Plotly 平滑曲面（volume：分級色 + 障礙物挖空 + 真實公尺軸）----
+// ---- (B) Plotly 平滑曲面（isosurface：分級等濃度面 + 障礙物挖空 + 真實公尺軸）----
 async function renderPlotly(
   container: HTMLDivElement,
   vol: SurveyVolume,
@@ -296,19 +288,21 @@ async function renderPlotly(
     }
   }
   const cmax = Math.max(threshold + 1e-6, vol.valueMax);
+  // 用 isosurface 畫分級等濃度面（清晰的曲面，非 volume 霧化）：外綠半透→內紅核可見。
+  // 起算改從「½ 監測」帶，避免整域被閾值=0 的外殼包成一大塊；showscale 關閉以免與 HTML 分級圖例重複。
+  const isoStart = typeof M === 'number' && M > 0 ? Math.max(threshold, M / 2) : threshold;
   const trace = {
-    type: 'volume',
+    type: 'isosurface',
     x: X, y: Y, z: Z, value: V,
-    isomin: threshold,
+    isomin: isoStart,
     isomax: cmax,
     cmin: threshold,
     cmax,
-    surface: { count: 17, fill: 1 },
-    opacity: 0.1,
-    opacityscale: buildOpacityScale(threshold, vol.valueMax, M, C),
+    surface: { count: 5, fill: 1 },
+    opacity: 0.5,
     colorscale: buildColorscale(threshold, vol.valueMax, M, C),
+    showscale: false,
     caps: { x: { show: false }, y: { show: false }, z: { show: false } },
-    colorbar: { title: vol.unit || 'mg/kg', thickness: 10, len: 0.6 },
   };
   // Z 軸真實深度刻度（公尺）
   const dStep = Math.max(1, Math.round(vol.maxDepthM / 5));
@@ -432,7 +426,7 @@ export function Iso3DViewer({
                 </div>
               )}
               <div className="iso3d-stats">
-                <span>閾值 ≥ {threshold} {sub?.unit || ''}{hasEstimated ? '・含推估層*' : ''}</span>
+                <span>閾值 {threshold === 0 ? '>' : '≥'} {threshold} {sub?.unit || ''}{hasEstimated ? '・含推估層*' : ''}</span>
                 <span className="iso3d-vol">
                   {mode === 'slices' ? '堆疊體積' : '平滑體積'} ≈ {activeVolume && activeVolume > 0 ? `${Math.round(activeVolume).toLocaleString()} m³` : '—'}
                 </span>

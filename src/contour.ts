@@ -399,7 +399,8 @@ export function buildIsobandFeaturesForLayer(
   const out: Feature[] = [];
   bands.features.forEach((f, i) => {
     const color = plan.colors[i];
-    if (!color || color === '__gap__') return;
+    // '__gap__' = 不連續帶間隙；白色 = 近零（≤eps）帶 → 視為無色不畫（與圖例一致，圖例本就濾掉白色）
+    if (!color || color === '__gap__' || color.toLowerCase() === '#ffffff') return;
     out.push({
       ...f,
       properties: {

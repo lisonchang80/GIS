@@ -82,6 +82,7 @@ export interface VectorLayer {
     sourceKind?: 'hydro' | 'gw-conc' | 'soil-survey';
     sourceTabId?: string;
     sourceSubId?: string;
+    depthInterval?: number; // soil-survey：深度層間隔（m），供圖層卡顯示深度區間 0~0.5m
     substances?: Array<{ id: string; name: string }>;
     activeSubstance?: string;
     substanceStyles?: Record<string, SubstanceStyle>;

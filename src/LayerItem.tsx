@@ -40,6 +40,13 @@ export function LayerItem(p: Props) {
   const wlActiveIdx = wl ? Math.max(0, wl.dates.indexOf(wl.activeDate)) : 0;
 
   const isMultiSub = !!wl?.substances && wl.substances.length > 0;
+  const isSoilSurvey = wl?.sourceKind === 'soil-survey';
+  const soilDepthRange = (key: string): string => {
+    const top = parseFloat(key);
+    const iv = wl?.depthInterval ?? (wl && wl.dates.length > 1 ? parseFloat(wl.dates[1]) - parseFloat(wl.dates[0]) : 0.5);
+    const bot = +(top + iv).toFixed(3);
+    return `${top}~${bot}m`;
+  };
 
   const isExMultiSub = !!ex?.substances && ex.substances.length > 0;
   const setExSub = (subId: string) => ex && p.onUpdate({ exceedance: { ...ex, activeSubstance: subId } });
@@ -179,6 +186,9 @@ export function LayerItem(p: Props) {
             {p.layer.name}
           </span>
         )}
+        {isSoilSurvey && wl && (
+          <span className="layer-depth-badge" title="目前顯示的深度區間">{soilDepthRange(wl.activeDate)}</span>
+        )}
         {isExpandable ? (
           <button
             className={`icon-btn ${waterLevelExpanded ? 'active' : ''}`}
@@ -205,7 +215,7 @@ export function LayerItem(p: Props) {
                 disabled={wlActiveIdx <= 0}
                 title="上一個日期"
               >◀</button>
-              <span className="water-level-date">{wl.activeDate}</span>
+              <span className="water-level-date">{isSoilSurvey ? soilDepthRange(wl.activeDate) : wl.activeDate}</span>
               <button
                 className="btn xs"
                 onClick={() => stepDate(1)}
@@ -278,7 +288,7 @@ export function LayerItem(p: Props) {
             </div>
           )}
           <div className="water-level-row water-level-flags-row water-level-flags-display">
-            {isMultiSub && (
+            {(isMultiSub || isSoilSurvey) && (
               <label className="water-level-flag">
                 <input
                   type="checkbox"
@@ -292,18 +302,20 @@ export function LayerItem(p: Props) {
                 圖例
               </label>
             )}
-            <label className="water-level-flag">
-              <input
-                type="checkbox"
-                checked={wl.dateLabel?.visible !== false}
-                onChange={(e) =>
-                  p.onUpdate({
-                    waterLevel: { ...wl, dateLabel: { ...(wl.dateLabel ?? {}), visible: e.target.checked } },
-                  })
-                }
-              />
-              日期
-            </label>
+            {!isSoilSurvey && (
+              <label className="water-level-flag">
+                <input
+                  type="checkbox"
+                  checked={wl.dateLabel?.visible !== false}
+                  onChange={(e) =>
+                    p.onUpdate({
+                      waterLevel: { ...wl, dateLabel: { ...(wl.dateLabel ?? {}), visible: e.target.checked } },
+                    })
+                  }
+                />
+                日期
+              </label>
+            )}
           </div>
         </>
       )}

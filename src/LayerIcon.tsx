@@ -33,9 +33,23 @@ export function LayerIcon({ layer, onClick }: Props) {
   let content: React.ReactNode;
   if (layer.waterLevel) {
     const isGwConc = layer.waterLevel.sourceKind === 'gw-conc';
+    const isSoilSurvey = layer.waterLevel.sourceKind === 'soil-survey';
     const isMulti = layer.waterLevel.dates.length > 1;
     const isMultiSub = !!layer.waterLevel.substances && layer.waterLevel.substances.length > 0;
-    if (isGwConc) {
+    const dropPath = (cx: number, top: number, bot: number) => {
+      const h = bot - top;
+      const w = h * 0.45;
+      return `M ${cx} ${top} C ${cx - w} ${top + h * 0.5}, ${cx - w} ${bot - h * 0.05}, ${cx} ${bot} C ${cx + w} ${bot - h * 0.05}, ${cx + w} ${top + h * 0.5}, ${cx} ${top} Z`;
+    };
+    if (isSoilSurvey) {
+      // 內紅外綠水滴：外層綠描邊水滴 + 內層紅填色小水滴（對應等濃度核紅、外圍綠）
+      content = (
+        <g strokeLinejoin="round" fillOpacity={opacity} strokeOpacity={opacity}>
+          <path d={dropPath(center, 2.5, 21.5)} fill="#dcfce7" stroke="#22c55e" strokeWidth={2} />
+          <path d={dropPath(center, 10, 19)} fill="#ef4444" stroke="#dc2626" strokeWidth={1} />
+        </g>
+      );
+    } else if (isGwConc) {
       const innerCount = isMultiSub ? 2 : isMulti ? 1 : 0;
       content = (
         <g
@@ -53,11 +67,6 @@ export function LayerIcon({ layer, onClick }: Props) {
         </g>
       );
     } else {
-      const drop = (cx: number, top: number, bot: number) => {
-        const h = bot - top;
-        const w = h * 0.45;
-        return `M ${cx} ${top} C ${cx - w} ${top + h * 0.5}, ${cx - w} ${bot - h * 0.05}, ${cx} ${bot} C ${cx + w} ${bot - h * 0.05}, ${cx + w} ${top + h * 0.5}, ${cx} ${top} Z`;
-      };
       const drops = isMulti
         ? [
             { top: 3, bot: 21 },
@@ -69,7 +78,7 @@ export function LayerIcon({ layer, onClick }: Props) {
           {drops.map((d, i) => (
             <path
               key={i}
-              d={drop(center, d.top, d.bot)}
+              d={dropPath(center, d.top, d.bot)}
               fill="none"
               stroke="#60a5fa"
               strokeWidth={2}

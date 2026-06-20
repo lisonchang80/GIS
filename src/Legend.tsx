@@ -14,8 +14,9 @@ export function Legend({ layers }: Props) {
     if (!layer.visible) continue;
     const wl = layer.waterLevel;
     if (wl) {
-      if (wl.sourceKind !== 'gw-conc') continue;
-      if (!wl.substances || wl.substances.length === 0) continue;
+      const isGwConc = wl.sourceKind === 'gw-conc' && !!wl.substances && wl.substances.length > 0;
+      const isSoilSurvey = wl.sourceKind === 'soil-survey';
+      if (!isGwConc && !isSoilSurvey) continue;
       if (wl.legend?.visible === false) continue;
       const sourceLayer = layers.find((l) => l.id === wl.sourceLayerId);
       if (!sourceLayer) continue;
@@ -113,8 +114,11 @@ function ExceedanceLegendCard({ layer, sourceLayer }: { layer: VectorLayer; sour
 
 function LegendCard({ layer, sourceLayer }: { layer: VectorLayer; sourceLayer: VectorLayer }) {
   const wl = layer.waterLevel!;
-  const activeId = wl.activeSubstance ?? wl.substances?.[0]?.id;
-  const tab = sourceLayer.gwConcTabs?.find((t) => t.id === wl.sourceTabId);
+  const isSoilSurvey = wl.sourceKind === 'soil-survey';
+  const activeId = wl.activeSubstance ?? wl.substances?.[0]?.id ?? wl.sourceSubId;
+  const tab = isSoilSurvey
+    ? sourceLayer.soilSurveyTabs?.find((t) => t.id === wl.sourceTabId)
+    : sourceLayer.gwConcTabs?.find((t) => t.id === wl.sourceTabId);
   const sub = tab?.substances.find((s) => s.id === activeId);
   if (!sub) return null;
 

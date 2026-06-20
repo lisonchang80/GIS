@@ -1776,10 +1776,6 @@ function readSoilSurvey(feature: Feature, tabId: string, subId: string, depthKey
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
 
-function fmtArea(m2: number): string {
-  return m2 < 10000 ? `${m2.toFixed(0)} m²` : `${(m2 / 10000).toFixed(2)} ha`;
-}
-
 function SoilSurveyTabPanel({
   tab,
   allTabs,
@@ -1961,6 +1957,8 @@ function SoilSurveyTabPanel({
         sourceKind: 'soil-survey',
         sourceTabId: tab.id,
         sourceSubId: activeSubstance.id,
+        depthInterval: interval,
+        legend: { visible: true },
         fill,
         lines,
         arrows,
@@ -2264,14 +2262,14 @@ function SoilSurveyTabPanel({
           </div>
 
           <div className="soil-survey-area-bar">
-            <span className="soil-survey-area-title">閾值 ≥ {threshold} 面積</span>
+            <span className="soil-survey-area-title">閾值 {threshold === 0 ? '>' : '≥'} {threshold} 面積</span>
             {(surveyVol?.slices ?? []).map((s) => (
               <span
                 key={s.topKey}
                 className={`soil-survey-area-chip${s.estimated ? ' is-estimated' : ''}`}
                 title={s.estimated ? '此層點太少，由上下層垂向內插推估' : undefined}
               >
-                {depthRangeLabel(s.topKey, interval)}{s.estimated ? '*' : ''}：{s.area > 0 ? fmtArea(s.area) : '—'}
+                {depthRangeLabel(s.topKey, interval)}{s.estimated ? '*' : ''}：{s.area > 0 ? `${Math.round(s.area).toLocaleString()} m²` : '—'}
               </span>
             ))}
             <span className="soil-survey-vol">

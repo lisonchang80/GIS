@@ -155,6 +155,18 @@ body,
   white-space: nowrap;
 }
 
+.layer-depth-badge {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: #93c5fd;
+  background: rgba(59, 130, 246, 0.16);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  border-radius: 4px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+
 .color-swatch {
   width: 22px;
   height: 22px;

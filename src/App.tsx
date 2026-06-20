@@ -8,6 +8,7 @@ import { DrawToolbar, type DrawMode } from './DrawToolbar';
 import { ProjectBar } from './ProjectBar';
 import { AttributeTable } from './AttributeTable';
 import { StylePopover } from './StylePopover';
+import { Iso3DViewer } from './Iso3DViewer';
 import { Legend } from './Legend';
 import { GeoOpsToolbar } from './GeoOpsToolbar';
 import { bufferLayer, fcToLayer, type BufferUnits } from './geoOps';
@@ -83,6 +84,7 @@ export default function App() {
   const [addPointTarget, setAddPointTarget] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
   const [currentProjectId, setCurrentProjectId] = useState<number | null>(null);
+  const [iso3DTarget, setIso3DTarget] = useState<{ layerId: string; tabId: string; subId: string } | null>(null);
 
   const toggleAttributes = useCallback((id: string) => {
     setAttributesLayerId((prev) => (prev === id ? null : id));
@@ -901,6 +903,20 @@ export default function App() {
             onCancelPick={handleCancelPick}
             onStartAddPointPick={handleStartAddPointPick}
             addPointPickActive={addPointTarget === layer.id}
+            onOpen3D={(layerId, tabId, subId) => setIso3DTarget({ layerId, tabId, subId })}
+          />
+        );
+      })()}
+      {iso3DTarget && (() => {
+        const layer = layers.find((l) => l.id === iso3DTarget.layerId);
+        const tab = layer?.soilSurveyTabs?.find((t) => t.id === iso3DTarget.tabId);
+        if (!layer || !tab) return null;
+        return (
+          <Iso3DViewer
+            layer={layer}
+            tab={tab}
+            subId={iso3DTarget.subId}
+            onClose={() => setIso3DTarget(null)}
           />
         );
       })()}

@@ -185,7 +185,7 @@ function buildKrigingInterpolator(samples: IDWSample[]): (x: number, y: number) 
   };
 }
 
-interface IDWGrid {
+export interface IDWGrid {
   grid: FeatureCollection<Point>;
   zMin: number;
   zMax: number;
@@ -219,7 +219,7 @@ function makeInterpolator(model: ContourModel | undefined, samples: IDWSample[])
   return (x, y) => idw(x, y, samples);
 }
 
-function buildIDWGrid(
+export function buildIDWGrid(
   samples: IDWSample[],
   gridCells = 50,
   model?: ContourModel,

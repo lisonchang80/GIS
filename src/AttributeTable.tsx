@@ -22,6 +22,7 @@ import {
   collectSoilSurveySamplesForDepth,
   type ThresholdLine,
 } from './contour';
+import { buildDepthKeys } from './iso3d';
 import { lookupGwConcStandard } from './gwConcStandards';
 import { lookupSoilConcStandard, SOIL_POLLUTANTS } from './soilConcStandards';
 import {
@@ -134,6 +135,7 @@ interface Props {
   onCancelPick?: () => void;
   onStartAddPointPick?: () => void;
   addPointPickActive?: boolean;
+  onOpen3D?: (layerId: string, tabId: string, subId: string) => void;
 }
 
 interface EditingCell {
@@ -155,6 +157,7 @@ export function AttributeTable({
   onCancelPick,
   onStartAddPointPick,
   addPointPickActive,
+  onOpen3D,
 }: Props) {
   const [query, setQuery] = useState('');
   const [sortKey, setSortKey] = useState<string | null>(null);
@@ -1739,6 +1742,7 @@ export function AttributeTable({
             draggingSubId={draggingSubId}
             setDraggingSubId={setDraggingSubId}
             trashSlot={trashButton}
+            onOpen3D={onOpen3D}
           />
         )}
     </div>
@@ -1758,19 +1762,6 @@ function soilConcTabTitle(tab: SoilConcTab): string {
 function soilSurveyTabTitle(tab: SoilSurveyTab): string {
   const label = tab.label?.trim();
   return label ? `土壤污染調查 (${label})` : '土壤污染調查';
-}
-
-// 由間隔/最深生成深度層字串清單：0 / 0.5 / … / maxDepth（toFixed 防浮點漂移）。
-function buildDepthKeys(interval?: number, maxDepth?: number): string[] {
-  const step = typeof interval === 'number' && interval > 0 ? interval : 0.5;
-  const max = typeof maxDepth === 'number' && maxDepth >= 0 ? maxDepth : 4;
-  const keys: string[] = [];
-  for (let i = 0; i < 400; i++) {
-    const d = +(i * step).toFixed(3);
-    if (d > max + 1e-9) break;
-    keys.push(String(d));
-  }
-  return keys;
 }
 
 function readSoilSurvey(feature: Feature, tabId: string, subId: string, depthKey: string): number | null {
@@ -1795,6 +1786,7 @@ function SoilSurveyTabPanel({
   draggingSubId,
   setDraggingSubId,
   trashSlot,
+  onOpen3D,
 }: {
   tab: SoilSurveyTab;
   allTabs: SoilSurveyTab[];
@@ -1804,6 +1796,7 @@ function SoilSurveyTabPanel({
   draggingSubId: string | null;
   setDraggingSubId: (id: string | null) => void;
   trashSlot: React.ReactNode;
+  onOpen3D?: (layerId: string, tabId: string, subId: string) => void;
 }) {
   const [activeSub, setActiveSub] = useState<string | null>(tab.substances[0]?.id ?? null);
   const [addingSubstance, setAddingSubstance] = useState(false);
@@ -2271,7 +2264,12 @@ function SoilSurveyTabPanel({
               <span className="ex-dot" style={{ background: EXCEEDANCE_COLORS.ok }} />合格
             </span>
             <button className="btn xs primary" onClick={handleGenerateContour}>生成等濃度線圖</button>
-            <button className="btn xs" disabled title="Phase 2：3D 等濃度線渲染 + 體積">3D 體積（即將推出）</button>
+            <button
+              className="btn xs"
+              onClick={() => activeSubstance && onOpen3D?.(layer.id, tab.id, activeSubstance.id)}
+              disabled={!onOpen3D || !activeSubstance}
+              title="3D 等濃度線渲染 + 體積（堆疊切片 / 平滑曲面）"
+            >3D 體積</button>
             <span className="hydro-unit-hint">※ 模型 {model.toUpperCase()}・單位 {activeSubstance.unit?.trim() || '—'}</span>
           </div>
         </>

@@ -22,7 +22,7 @@ import {
   collectSoilSurveySamplesForDepth,
   type ThresholdLine,
 } from './contour';
-import { buildDepthKeys } from './iso3d';
+import { buildDepthKeys, depthRangeLabel } from './iso3d';
 import { lookupGwConcStandard } from './gwConcStandards';
 import { lookupSoilConcStandard, SOIL_POLLUTANTS } from './soilConcStandards';
 import {
@@ -2170,7 +2170,7 @@ function SoilSurveyTabPanel({
                   <th className="hydro-frozen hydro-frozen-elev">高程</th>
                   {depthKeys.map((dk) => (
                     <th key={dk} className="hydro-date-th">
-                      <div className="hydro-date-th-inner"><span className="hydro-date-label">{dk}m</span></div>
+                      <div className="hydro-date-th-inner"><span className="hydro-date-label">{depthRangeLabel(dk, interval)}</span></div>
                     </th>
                   ))}
                 </tr>
@@ -2251,7 +2251,7 @@ function SoilSurveyTabPanel({
             <span className="soil-survey-area-title">閾值 ≥ {threshold} 面積</span>
             {areaStats.perDepth.map((d) => (
               <span key={d.depth} className="soil-survey-area-chip">
-                {d.depth}m：{d.area > 0 ? fmtArea(d.area) : '—'}
+                {depthRangeLabel(d.depth, interval)}：{d.area > 0 ? fmtArea(d.area) : '—'}
               </span>
             ))}
             <span className="soil-survey-vol">總體積 ≈ {areaStats.volume > 0 ? `${areaStats.volume.toFixed(0)} m³` : '—'}</span>

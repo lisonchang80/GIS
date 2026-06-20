@@ -35,17 +35,32 @@ export interface SurveyVolume {
 const LAT_M = 110540; // 1° 緯度 ≈ 110540 m
 const lonMetersPerDeg = (lat: number) => 111320 * Math.cos((lat * Math.PI) / 180);
 
-// 由間隔/最深生成深度層字串清單：0 / 0.5 / … / maxDepth（toFixed 防浮點漂移）。
+// 採樣是「深度區間」：0~0.5m / 0.5~1.0m / …。回傳每層的「頂深」字串當 key
+// （0 / 0.5 / … / maxDepth−interval）。N 層 = maxDepth / interval（不是 N+1 個點）。
 export function buildDepthKeys(interval?: number, maxDepth?: number): string[] {
   const step = typeof interval === 'number' && interval > 0 ? interval : 0.5;
   const max = typeof maxDepth === 'number' && maxDepth >= 0 ? maxDepth : 4;
   const keys: string[] = [];
   for (let i = 0; i < 400; i++) {
-    const d = +(i * step).toFixed(3);
-    if (d > max + 1e-9) break;
-    keys.push(String(d));
+    const top = +(i * step).toFixed(3);
+    if (top + step > max + 1e-9) break; // 只收「下緣 ≤ maxDepth」的完整層
+    keys.push(String(top));
   }
   return keys;
+}
+
+// 把頂深 key 轉成對外的區間標籤：'0' → '0~0.5m'、'0.5' → '0.5~1m'。
+export function depthRangeLabel(topKey: string, interval?: number): string {
+  const step = typeof interval === 'number' && interval > 0 ? interval : 0.5;
+  const top = parseFloat(topKey);
+  const bot = +(top + step).toFixed(3);
+  return `${top}~${bot}m`;
+}
+
+// 該層的代表深度（中心點），用於內插取樣位置與 3D 垂向定位。
+export function depthMid(topKey: string, interval?: number): number {
+  const step = typeof interval === 'number' && interval > 0 ? interval : 0.5;
+  return parseFloat(topKey) + step / 2;
 }
 
 export function buildSurveyVolume(
@@ -59,8 +74,9 @@ export function buildSurveyVolume(
   substanceName: string,
   unit: string,
 ): SurveyVolume {
+  // depth = 該層中心點（代表深度），用於 3D 垂向定位與 isosurface 的 z。
   const perDepth = depthKeys.map((dk) => ({
-    depth: parseFloat(dk),
+    depth: parseFloat(dk) + interval / 2,
     samples: collectSoilSurveySamplesForDepth(layer, tabId, subId, dk),
   }));
   const allSamples = perDepth.flatMap((d) => d.samples);

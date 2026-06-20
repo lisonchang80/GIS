@@ -10,6 +10,10 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+# deploy.bat staging + rollback copies (built artifacts, never committed)
+dist_new
+dist_prev
+dist_bad
 *.local
 
 # Backend (FastAPI + SQLite)

@@ -48,12 +48,28 @@ cloudflared tunnel run clinscope
 
 ```powershell
 cd "D:\Claude code\GIS"
-npm run build                       # rebuild dist/ (includes the client id)
-packaging\start_public.bat          # starts the GIS server on :8000
+packaging\deploy.bat                 # typecheck -> build to dist_new -> swap into dist/
 ```
+
+`deploy.bat` builds into a staging dir (`dist_new`) so the live `dist/` keeps
+serving the whole time, then swaps it in and keeps the previous build as
+`dist_prev`. The already-running server serves the new `dist/` immediately
+(StaticFiles reads from disk), so **no restart is needed**. It refuses to build
+if `.env.local` is missing the client id, and warns if the working tree has
+uncommitted changes (the build ships the current tree, not a commit).
+
+If the site isn't up yet (fresh boot), start it once with
+`packaging\start_public.bat` (or the autostart shortcut below).
 
 The public site is then live at https://gis.tinghaochang.com (assuming the
 shared tunnel is running).
+
+### Roll back a bad deploy (instant, no rebuild)
+
+```powershell
+cd "D:\Claude code\GIS"
+packaging\rollback.bat               # swaps dist_prev back into dist/
+```
 
 ## Autostart at login (optional)
 Put a shortcut to `packaging\autostart\gis_public.vbs` in the Startup folder

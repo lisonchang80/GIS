@@ -106,6 +106,8 @@ export interface VectorLayer {
 
 或者更乾淨：抽象化一個 `collectSamples(layer, date, valueExtractor)` 高階函式，同一個 contour pipeline 多種資料來源。
 
+**非日期維度也能整條重用（土壤污染調查實證 2026-06-21）**：分頁的維度若不是日期（例如「深度層」），把該維度的值**當成 date 字串**塞進 `waterLevel.dates`/`activeDate`、`rebuildContourLayer` 加一個 `sourceKind` 分支（仿 isSingleGwConc，arrows 強制關），就能**零改動**重用 MapView 的等值線渲染與 LayerItem 的日期切換器（變成深度切換器）。只要再加一支對應的 `collect…SamplesFor<維度>` 取樣函式即可。3D 體積/面積另走 `src/iso3d.ts`（`buildSurveyVolume` 共用規則格網：分級色帶切片、缺層垂向內插、`turf.difference` 障礙物挖空、堆疊 vs 體素雙體積）。
+
 `buildContourLayerFeatures` / `rebuildContourLayer` 內部呼叫的 `collectSamplesForDate` 改用 valueExtractor 注入。**注意這是 breaking change，要全檔搜尋所有 caller**。
 
 ## Step 4.5 — 過濾 `__newDataKey` 不被外露為主屬性表欄位

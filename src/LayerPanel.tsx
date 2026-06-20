@@ -16,7 +16,6 @@ interface Props {
   onPan: (dx: number, dy: number) => void;
   onPanReset: () => void;
   projectName: string;
-  onProjectNameChange: (name: string) => void;
   layers: VectorLayer[];
   onUpdateLayer: (id: string, patch: Partial<VectorLayer>) => void;
   onRemoveLayer: (id: string) => void;
@@ -71,13 +70,9 @@ export function LayerPanel(p: Props) {
             </div>
           )}
         </div>
-        <input
-          type="text"
-          className="project-name-input"
-          value={p.projectName}
-          onChange={(e) => p.onProjectNameChange(e.target.value)}
-          placeholder="專案名稱"
-        />
+        <div className="project-name-display" title={p.projectName}>
+          {p.projectName}
+        </div>
       </div>
 
       {p.beforeBasemap}

@@ -734,7 +734,7 @@ export default function App() {
     [currentProjectId, buildPayload, applyProject],
   );
 
-  const handleNewProject = useCallback(async () => {
+  const handleNewProject = useCallback(async (name: string) => {
     if (currentProjectId != null) {
       try {
         await saveProject(currentProjectId, buildPayload());
@@ -742,29 +742,57 @@ export default function App() {
         console.warn('save before new failed', e);
       }
     }
-    const created = await createProject('未命名專案');
+    const created = await createProject(name);
     if (!created) return;
     localStorage.setItem(CURRENT_PROJECT_KEY, String(created.id));
     setCurrentProjectId(created.id);
     applyProject(null);
+    setProjectName(name);
     setProjects(await listProjects());
   }, [currentProjectId, buildPayload, applyProject]);
 
-  const handleDeleteProject = useCallback(async () => {
-    if (currentProjectId == null) return;
-    if (!window.confirm('確定刪除目前專案？此動作無法復原。')) return;
-    await deleteProject(currentProjectId);
+  // "Save As": clone the CURRENT content into a brand-new project under a new
+  // name and switch to the copy. The original keeps its own name + content.
+  const handleSaveAsProject = useCallback(async (name: string) => {
+    if (currentProjectId != null) {
+      try {
+        await saveProject(currentProjectId, buildPayload());
+      } catch (e) {
+        console.warn('save before saveAs failed', e);
+      }
+    }
+    const created = await createProject(name);
+    if (!created) return;
+    try {
+      await saveProject(created.id, { ...buildPayload(), projectName: name });
+    } catch (e) {
+      console.warn('saveAs write failed', e);
+    }
+    localStorage.setItem(CURRENT_PROJECT_KEY, String(created.id));
+    setCurrentProjectId(created.id);
+    setProjectName(name);
+    setSavedAt(new Date());
+    setProjects(await listProjects());
+  }, [currentProjectId, buildPayload]);
+
+  // The delete dialog supplies the target id (current project by default, or any
+  // other project picked from its dropdown). Only re-home the UI if we deleted
+  // the project that's currently open.
+  const handleDeleteProject = useCallback(async (id: number) => {
+    await deleteProject(id);
     let list = await listProjects();
     if (list.length === 0) {
       const created = await createProject('未命名專案');
       if (created) list = [created];
     }
-    const next = list[0] ?? null;
     setProjects(list);
+    if (id !== currentProjectId) return;
+    const next = list[0] ?? null;
     setCurrentProjectId(next?.id ?? null);
     if (next) {
       localStorage.setItem(CURRENT_PROJECT_KEY, String(next.id));
       applyProject(await loadProject(next.id));
+      setProjectName(next.name || '未命名專案');
     } else {
       localStorage.removeItem(CURRENT_PROJECT_KEY);
       applyProject(null);
@@ -792,8 +820,9 @@ export default function App() {
         onBasemapOpacityReset={() => setBasemapOpacity(1)}
         onPan={handlePan}
         onPanReset={handlePanReset}
-        projectName={projectName}
-        onProjectNameChange={setProjectName}
+        projectName={
+          projects.find((pr) => pr.id === currentProjectId)?.name || projectName || '未命名專案'
+        }
         layers={layers}
         onUpdateLayer={updateLayer}
         onRemoveLayer={removeLayer}
@@ -811,6 +840,7 @@ export default function App() {
             currentProjectId={currentProjectId}
             onSwitch={handleSwitchProject}
             onNew={handleNewProject}
+            onSaveAs={handleSaveAsProject}
             onDelete={handleDeleteProject}
             onExport={handleExportProject}
             onImport={handleImportProject}

@@ -269,11 +269,20 @@ export function buildSurveyVolume(p: SurveyVolumeParams): SurveyVolume {
     volumeStack += area * interval;
   });
 
-  // ---- 純量場（Plotly）----
+  // ---- 純量場（Plotly）：障礙物覆蓋的體素設 NaN，渲染時會被挖空 ----
   const values: number[] = [];
   for (let k = 0; k < perDepth.length; k++) {
     const grid = grids[k];
-    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) values.push(grid ? grid[j * N + i] : NaN);
+    const obs = obAtDepth(depths[k]);
+    for (let j = 0; j < N; j++) {
+      for (let i = 0; i < N; i++) {
+        let v = grid ? grid[j * N + i] : NaN;
+        if (Number.isFinite(v) && obs.length && obs.some(({ feat }) => turf.booleanPointInPolygon([X[i], Y[j]], feat))) {
+          v = NaN;
+        }
+        values.push(v);
+      }
+    }
   }
   const field: ScalarField = { xM, yM, depths, values };
 

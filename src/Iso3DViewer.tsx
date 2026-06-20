@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type * as THREE_T from 'three'; // 型別用（編譯期抹除）；執行期 dynamic import
 import type { SoilSurveyTab, VectorLayer } from './types';
-import { buildDepthKeys, buildSurveyVolume, type SurveyVolume } from './iso3d';
+import { buildDepthKeys, buildSurveyVolume, depthRangeLabel, type SurveyVolume } from './iso3d';
 
 type Mode = 'slices' | 'isosurface';
+type SliceLayout = 'stack' | 'separate' | 'flat';
 
 // Three.js 用 canvas 貼圖做文字 sprite（不需字型檔）。
 function makeLabel(
@@ -29,7 +30,13 @@ function makeLabel(
 }
 
 // ---- (A) Three.js 堆疊切片：各深度層分級色帶擠出疊放 + 障礙物灰柱 + 軸標 ----
-async function renderThree(container: HTMLDivElement, vol: SurveyVolume, zExag: number): Promise<() => void> {
+// layout：stack=依真實深度連續堆疊；separate=拉開間距的分離（爆炸）視圖；flat=全部攤平在地面網格比較
+async function renderThree(
+  container: HTMLDivElement,
+  vol: SurveyVolume,
+  zExag: number,
+  layout: SliceLayout,
+): Promise<() => void> {
   const THREE = await import('three');
   const { OrbitControls } = await import('three/examples/jsm/controls/OrbitControls.js');
   container.innerHTML = '';
@@ -48,10 +55,19 @@ async function renderThree(container: HTMLDivElement, vol: SurveyVolume, zExag: 
   scene.add(dl);
 
   const thickness = Math.max(vol.interval * zExag, 0.5);
+  const span = Math.max(vol.horizSpanM, 10);
+  const n = vol.slices.length;
+  // layout 幾何參數
+  const sepSpacing = thickness * 2.6;                 // 分離視圖每層間距
+  const flatTk = Math.max(thickness * 0.5, 0.6);      // 攤平視圖薄片厚
+  const cols = Math.max(1, Math.ceil(Math.sqrt(n)));
+  const rows = Math.max(1, Math.ceil(n / cols));
+  const cell = span * 1.3;                            // 攤平視圖格距
+
   // 置中：所有色帶座標平均
-  let cx = 0; let cy = 0; let n = 0;
-  for (const s of vol.slices) for (const b of s.bands) for (const poly of b.polysM) for (const ring of poly) for (const [x, y] of ring) { cx += x; cy += y; n++; }
-  if (n > 0) { cx /= n; cy /= n; }
+  let cx = 0; let cy = 0; let np = 0;
+  for (const s of vol.slices) for (const b of s.bands) for (const poly of b.polysM) for (const ring of poly) for (const [x, y] of ring) { cx += x; cy += y; np++; }
+  if (np > 0) { cx /= np; cy /= np; }
 
   const geos: THREE_T.BufferGeometry[] = [];
   const mats: THREE_T.Material[] = [];
@@ -69,7 +85,35 @@ async function renderThree(container: HTMLDivElement, vol: SurveyVolume, zExag: 
     return shape;
   };
 
-  for (const s of vol.slices) {
+  const labelH = span * 0.06;
+  const off = span * 0.62;
+  const addLabel = (t: string, x: number, y: number, z: number, c?: string) => {
+    const spr = makeLabel(THREE, t, labelH, c);
+    spr.position.set(x, y, z);
+    scene.add(spr);
+  };
+
+  // 每層在各 layout 下的擺位（mesh 旋轉後 local z→world y(上)，local 平面落在 world XZ）
+  const slabPose = (k: number): { tk: number; baseY: number; offX: number; offZ: number } => {
+    const top = parseFloat(vol.slices[k].topKey);
+    if (layout === 'flat') {
+      const col = k % cols; const row = Math.floor(k / cols);
+      return {
+        tk: flatTk, baseY: 0,
+        offX: (col - (cols - 1) / 2) * cell,
+        offZ: (row - (rows - 1) / 2) * cell,
+      };
+    }
+    if (layout === 'separate') {
+      // 由淺到深往下拉開：第 k 層的底在 -(k+1)*sepSpacing
+      return { tk: thickness, baseY: -(k + 1) * sepSpacing, offX: 0, offZ: 0 };
+    }
+    // stack：依真實深度，層底 = -(top+interval)，往上擠出 interval（與障礙物同座標系）
+    return { tk: thickness, baseY: -(top + vol.interval) * zExag, offX: 0, offZ: 0 };
+  };
+
+  vol.slices.forEach((s, k) => {
+    const pose = slabPose(k);
     for (const band of s.bands) {
       const mat = new THREE.MeshLambertMaterial({
         color: new THREE.Color(band.color),
@@ -80,63 +124,79 @@ async function renderThree(container: HTMLDivElement, vol: SurveyVolume, zExag: 
       mats.push(mat);
       for (const poly of band.polysM) {
         if (!poly[0] || poly[0].length < 3) continue;
-        const geo = new THREE.ExtrudeGeometry(makeShape(poly), { depth: thickness, bevelEnabled: false });
+        const geo = new THREE.ExtrudeGeometry(makeShape(poly), { depth: pose.tk, bevelEnabled: false });
         geos.push(geo);
         const mesh = new THREE.Mesh(geo, mat);
         mesh.rotation.x = -Math.PI / 2;
-        mesh.position.y = -s.depth * zExag;
+        mesh.position.set(pose.offX, pose.baseY, pose.offZ);
         group.add(mesh);
       }
     }
-  }
+    // 分離 / 攤平：每片標深度區間
+    if (layout === 'separate') {
+      addLabel(depthRangeLabel(s.topKey, vol.interval), off, pose.baseY + pose.tk / 2, 0, '#cbd5e1');
+    } else if (layout === 'flat') {
+      addLabel(depthRangeLabel(s.topKey, vol.interval), pose.offX, flatTk + labelH, pose.offZ - cell * 0.42, '#cbd5e1');
+    }
+  });
 
-  // 障礙物灰柱（depthTop~depthBottom）
-  for (const ob of vol.obstacles) {
-    const outer = ob.ringsM[0];
-    if (!outer || outer.length < 3) continue;
-    const shape = new THREE.Shape();
-    outer.forEach(([x, y], i) => (i === 0 ? shape.moveTo(x - cx, y - cy) : shape.lineTo(x - cx, y - cy)));
-    const tk = Math.max((ob.depthBottom - ob.depthTop) * zExag, 0.5);
-    const geo = new THREE.ExtrudeGeometry(shape, { depth: tk, bevelEnabled: false });
-    geos.push(geo);
-    const mat = new THREE.MeshLambertMaterial({ color: 0x9ca3af, transparent: true, opacity: 0.28, side: THREE.DoubleSide });
-    mats.push(mat);
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.rotation.x = -Math.PI / 2;
-    mesh.position.y = -ob.depthTop * zExag;
-    group.add(mesh);
+  // 障礙物灰柱（depthTop~depthBottom）：只在 stack 顯示（跨層、分離/攤平無對應）
+  if (layout === 'stack') {
+    for (const ob of vol.obstacles) {
+      const outer = ob.ringsM[0];
+      if (!outer || outer.length < 3) continue;
+      const shape = new THREE.Shape();
+      outer.forEach(([x, y], i) => (i === 0 ? shape.moveTo(x - cx, y - cy) : shape.lineTo(x - cx, y - cy)));
+      const tk = Math.max((ob.depthBottom - ob.depthTop) * zExag, 0.5);
+      const geo = new THREE.ExtrudeGeometry(shape, { depth: tk, bevelEnabled: false });
+      geos.push(geo);
+      const mat = new THREE.MeshLambertMaterial({ color: 0x9ca3af, transparent: true, opacity: 0.28, side: THREE.DoubleSide });
+      mats.push(mat);
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.rotation.x = -Math.PI / 2;
+      // 底在較深處（-depthBottom），往上擠出至 -depthTop（往地表方向）
+      mesh.position.y = -ob.depthBottom * zExag;
+      group.add(mesh);
+    }
   }
   scene.add(group);
 
-  const span = Math.max(vol.horizSpanM, 10);
-  scene.add(new THREE.GridHelper(span * 1.6, 16, 0x334155, 0x1f2937));
+  const gridSpan = layout === 'flat' ? Math.max(cols, rows) * cell * 1.2 : span * 1.6;
+  scene.add(new THREE.GridHelper(gridSpan, 16, 0x334155, 0x1f2937));
 
-  // 軸標 + 刻度（X/Y 距離 m、Z 真實深度 m）
-  const labelH = span * 0.06;
-  const off = span * 0.62;
-  const addLabel = (t: string, x: number, y: number, z: number, c?: string) => {
-    const spr = makeLabel(THREE, t, labelH, c);
-    spr.position.set(x, y, z);
-    scene.add(spr);
-  };
-  addLabel('東西 X (m)', off, 0, 0, '#93c5fd');
-  addLabel('南北 Y (m)', 0, 0, off, '#86efac');
-  addLabel(`寬約 ${Math.round(span)} m`, off, labelH * 1.2, 0, '#64748b');
-  // Z 深度刻度（真實深度）
-  const dStep = Math.max(1, Math.round(vol.maxDepthM / 5));
-  for (let d = 0; d <= vol.maxDepthM + 1e-9; d += dStep) {
-    addLabel(`${d} m`, -off, -d * zExag, -off, '#fca5a5');
+  // 軸標 / 刻度
+  if (layout !== 'flat') {
+    addLabel('東西 X (m)', off, 0, 0, '#93c5fd');
+    addLabel('南北 Y (m)', 0, 0, off, '#86efac');
+    addLabel(`寬約 ${Math.round(span)} m`, off, labelH * 1.2, 0, '#64748b');
   }
-  addLabel('深度', -off, labelH * 1.5, -off, '#fca5a5');
+  if (layout === 'stack') {
+    // Z 深度刻度（真實深度）
+    const dStep = Math.max(1, Math.round(vol.maxDepthM / 5));
+    for (let d = 0; d <= vol.maxDepthM + 1e-9; d += dStep) {
+      addLabel(`${d} m`, -off, -d * zExag, -off, '#fca5a5');
+    }
+    addLabel('深度', -off, labelH * 1.5, -off, '#fca5a5');
+  }
 
-  const targetY = -(vol.maxDepthM * zExag) / 2;
-  const target = new THREE.Vector3(0, targetY, 0);
-  const dist = span * 1.5 + 50;
-  camera.position.set(dist * 0.85, dist * 0.7 + Math.abs(targetY), dist * 0.85);
-  camera.lookAt(target);
+  // 相機 / 控制
   const controls = new OrbitControls(camera, renderer.domElement);
-  controls.target.copy(target);
   controls.enableDamping = true;
+  if (layout === 'flat') {
+    const target = new THREE.Vector3(0, 0, 0);
+    const reach = Math.max(cols, rows) * cell;
+    camera.position.set(0.001, reach * 1.25, 0.001); // 近乎正上方俯視
+    camera.lookAt(target);
+    controls.target.copy(target);
+  } else {
+    const vBottom = layout === 'separate' ? n * sepSpacing : vol.maxDepthM * zExag;
+    const targetY = -vBottom / 2;
+    const target = new THREE.Vector3(0, targetY, 0);
+    const dist = Math.max(span * 1.5, vBottom) + 50;
+    camera.position.set(dist * 0.85, dist * 0.55 + Math.abs(targetY), dist * 0.85);
+    camera.lookAt(target);
+    controls.target.copy(target);
+  }
   controls.update();
 
   let raf = 0;
@@ -191,11 +251,26 @@ function buildColorscale(threshold: number, vmax: number, M?: number, C?: number
   return stops;
 }
 
-// ---- (B) Plotly isosurface ----
+// 依分級斷點建 opacityscale：閾值透明、濃度越高越不透明（讓紅核穿透綠殼可見）。
+function buildOpacityScale(threshold: number, vmax: number, M?: number, C?: number): [number, number][] {
+  const cmax = Math.max(vmax, threshold + 1e-6);
+  const norm = (v: number) => Math.max(0, Math.min(1, (v - threshold) / (cmax - threshold)));
+  if (!(typeof M === 'number' && typeof C === 'number' && M > 0 && C > M)) {
+    return [[0, 0], [1, 0.85]];
+  }
+  return [
+    [0, 0],
+    [norm(M / 2), 0.05],
+    [norm(M), 0.16],
+    [norm(C), 0.42],
+    [1, 0.9],
+  ];
+}
+
+// ---- (B) Plotly 平滑曲面（volume：分級色 + 障礙物挖空 + 真實公尺軸）----
 async function renderPlotly(
   container: HTMLDivElement,
   vol: SurveyVolume,
-  zExag: number,
   threshold: number,
   M?: number,
   C?: number,
@@ -210,40 +285,47 @@ async function renderPlotly(
   if (!field) return () => {};
   const { xM, yM, depths, values } = field;
   const N = xM.length;
-  const lo = threshold - Math.max(1, vol.valueMax - threshold);
+  const lo = threshold - Math.max(1, vol.valueMax - threshold); // 障礙物/缺值體素 → 低於閾值（透明、挖空）
   const X: number[] = []; const Y: number[] = []; const Z: number[] = []; const V: number[] = [];
   for (let k = 0; k < depths.length; k++) {
     for (let j = 0; j < N; j++) {
       for (let i = 0; i < N; i++) {
         const v = values[k * N * N + j * N + i];
-        X.push(xM[i]); Y.push(yM[j]); Z.push(-depths[k] * zExag); V.push(Number.isFinite(v) ? v : lo);
+        X.push(xM[i]); Y.push(yM[j]); Z.push(-depths[k]); V.push(Number.isFinite(v) ? v : lo); // Z 用真實公尺
       }
     }
   }
+  const cmax = Math.max(threshold + 1e-6, vol.valueMax);
   const trace = {
-    type: 'isosurface',
+    type: 'volume',
     x: X, y: Y, z: Z, value: V,
     isomin: threshold,
-    isomax: Math.max(threshold + 1e-6, vol.valueMax),
+    isomax: cmax,
     cmin: threshold,
-    cmax: Math.max(threshold + 1e-6, vol.valueMax),
-    surface: { count: 4, fill: 1 },
-    opacity: 0.6,
+    cmax,
+    surface: { count: 17, fill: 1 },
+    opacity: 0.1,
+    opacityscale: buildOpacityScale(threshold, vol.valueMax, M, C),
     colorscale: buildColorscale(threshold, vol.valueMax, M, C),
     caps: { x: { show: false }, y: { show: false }, z: { show: false } },
     colorbar: { title: vol.unit || 'mg/kg', thickness: 10, len: 0.6 },
   };
-  // Z 軸標真實深度（在誇張位置標真實值）
+  // Z 軸真實深度刻度（公尺）
   const dStep = Math.max(1, Math.round(vol.maxDepthM / 5));
   const tickvals: number[] = []; const ticktext: string[] = [];
-  for (let d = 0; d <= vol.maxDepthM + 1e-9; d += dStep) { tickvals.push(-d * zExag); ticktext.push(`${d}`); }
+  for (let d = 0; d <= vol.maxDepthM + 1e-9; d += dStep) { tickvals.push(-d); ticktext.push(`${d}`); }
+  // X/Y/Z 全用真實公尺；深度以 aspectratio 視覺誇張（單位一致，不假造資料值）
+  const spanX = (Math.max(...xM) - Math.min(...xM)) || 1;
+  const spanY = (Math.max(...yM) - Math.min(...yM)) || 1;
+  const maxH = Math.max(spanX, spanY);
   const axis = { backgroundcolor: '#0b0f14', gridcolor: '#1f2937', color: '#94a3b8' };
   const layout = {
     paper_bgcolor: '#0b0f14',
     font: { color: '#cbd5e1', size: 11 },
     margin: { l: 0, r: 0, t: 0, b: 0 },
     scene: {
-      aspectmode: 'data',
+      aspectmode: 'manual',
+      aspectratio: { x: spanX / maxH, y: spanY / maxH, z: 0.7 },
       xaxis: { ...axis, title: '東西 X (m)' },
       yaxis: { ...axis, title: '南北 Y (m)' },
       zaxis: { ...axis, title: '深度 (m)', tickvals, ticktext },
@@ -263,6 +345,7 @@ export function Iso3DViewer({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [mode, setMode] = useState<Mode>('slices');
+  const [layout, setLayout] = useState<SliceLayout>('stack');
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
@@ -298,15 +381,15 @@ export function Iso3DViewer({
     (async () => {
       try {
         cleanup = mode === 'slices'
-          ? await renderThree(container, vol, zExag)
-          : await renderPlotly(container, vol, zExag, threshold, sub?.monitorConc, sub?.controlConc);
+          ? await renderThree(container, vol, zExag, layout)
+          : await renderPlotly(container, vol, threshold, sub?.monitorConc, sub?.controlConc);
       } catch (e) {
         if (!disposed) setErr((e as Error).message || String(e));
       }
       if (!disposed) setLoading(false);
     })();
     return () => { disposed = true; try { cleanup(); } catch { /* noop */ } };
-  }, [mode, vol, threshold, sub]);
+  }, [mode, layout, vol, threshold, sub]);
 
   const activeVolume = mode === 'slices' ? vol?.volumeStack : vol?.volumeSmooth;
   const hasEstimated = !!vol?.slices.some((s) => s.estimated);
@@ -320,6 +403,13 @@ export function Iso3DViewer({
             <button className={`btn xs${mode === 'slices' ? ' primary' : ''}`} onClick={() => setMode('slices')}>堆疊切片</button>
             <button className={`btn xs${mode === 'isosurface' ? ' primary' : ''}`} onClick={() => setMode('isosurface')}>平滑曲面</button>
           </div>
+          {mode === 'slices' && (
+            <div className="iso3d-modes iso3d-layouts">
+              <button className={`btn xs${layout === 'stack' ? ' primary' : ''}`} onClick={() => setLayout('stack')} title="依真實深度連續堆疊">堆疊</button>
+              <button className={`btn xs${layout === 'separate' ? ' primary' : ''}`} onClick={() => setLayout('separate')} title="拉開各層間距，逐層分離檢視">切片分離</button>
+              <button className={`btn xs${layout === 'flat' ? ' primary' : ''}`} onClick={() => setLayout('flat')} title="各層攤平於地面，俯視並排比較">切片平放</button>
+            </div>
+          )}
           <button className="iso3d-close" onClick={onClose} title="關閉">×</button>
         </div>
         <div className="iso3d-body">

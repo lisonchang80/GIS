@@ -1937,6 +1937,87 @@ body,
   font-weight: 700;
   color: #86efac;
 }
+.iso3d-legend {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  background: rgba(11, 15, 20, 0.72);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.iso3d-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.iso3d-legend-sw {
+  width: 14px;
+  height: 10px;
+  border-radius: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+/* 土壤污染調查：缺層補估 + 障礙物 */
+.soil-survey-fillgaps {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.soil-survey-area-chip.is-estimated {
+  border-style: dashed;
+  color: #fbbf24;
+}
+.soil-obstacle-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+.soil-obstacle-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.soil-obstacle-title {
+  font-weight: 600;
+  color: var(--text);
+}
+.soil-obstacle-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+}
+.soil-obstacle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.soil-obstacle-shape {
+  font-size: 14px;
+  color: var(--muted);
+  width: 16px;
+  text-align: center;
+}
+.cell-input.soil-obstacle-label {
+  width: 110px;
+}
+.soil-obstacle-depth {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+}
 
 .hydro-legend-inline {
   display: inline-flex;

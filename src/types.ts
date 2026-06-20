@@ -1,4 +1,4 @@
-import type { FeatureCollection } from 'geojson';
+import type { FeatureCollection, Polygon } from 'geojson';
 
 export type BaseMapId =
   | 'osm'
@@ -152,6 +152,20 @@ export interface SoilSurveyTab {
   activeDepth?: number; // 目前聚焦的深度層
   threshold?: number; // 等濃度線閾值，閾值以上計算面積/體積，預設 0
   model?: 'idw' | 'tin' | 'kriging';
+  fillGaps?: boolean; // 整層點太少（<3）時，用上下層垂向內插補估該層，預設 true
+  obstacles?: ObstacleZone[]; // 障礙物排除區（在深度區間內挖空、不計入面積/體積）
+}
+
+// 障礙物排除區：地圖上畫的形狀，在 depthTop~depthBottom 深度區間內把該範圍挖空。
+// 圓形/矩形 terra-draw 也吐 Polygon，所以幾何一律存 Polygon。
+export interface ObstacleZone {
+  id: string;
+  shape: 'polygon' | 'rectangle' | 'circle';
+  geometry: Polygon;
+  depthTop: number; // 障礙物上緣深度（m）
+  depthBottom: number; // 障礙物下緣深度（m）
+  enabled: boolean; // 打勾生效
+  label?: string;
 }
 
 export type ExceedanceLevel = 'alert' | 'warn' | 'ok' | 'nodata';

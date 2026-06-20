@@ -5,6 +5,7 @@ import type {
   ExceedanceConfig,
   GwConcSubstance,
   GwConcTab,
+  ObstacleZone,
   SoilConcTab,
   SoilLandUse,
   SoilSurveyTab,
@@ -15,14 +16,13 @@ import type {
 } from './types';
 import { SOIL_BATCH_KEY } from './types';
 import {
-  areaAboveThreshold,
   buildContourFeaturesForLayer,
   buildContourLayerFeatures,
   collectGwConcSamplesForDate,
   collectSoilSurveySamplesForDepth,
   type ThresholdLine,
 } from './contour';
-import { buildDepthKeys, depthRangeLabel } from './iso3d';
+import { buildDepthKeys, buildSurveyVolume, depthRangeLabel } from './iso3d';
 import { lookupGwConcStandard } from './gwConcStandards';
 import { lookupSoilConcStandard, SOIL_POLLUTANTS } from './soilConcStandards';
 import {
@@ -136,6 +136,7 @@ interface Props {
   onStartAddPointPick?: () => void;
   addPointPickActive?: boolean;
   onOpen3D?: (layerId: string, tabId: string, subId: string) => void;
+  onDrawObstacle?: (layerId: string, tabId: string, shape: 'polygon' | 'rectangle' | 'circle') => void;
 }
 
 interface EditingCell {
@@ -158,6 +159,7 @@ export function AttributeTable({
   onStartAddPointPick,
   addPointPickActive,
   onOpen3D,
+  onDrawObstacle,
 }: Props) {
   const [query, setQuery] = useState('');
   const [sortKey, setSortKey] = useState<string | null>(null);
@@ -1743,6 +1745,7 @@ export function AttributeTable({
             setDraggingSubId={setDraggingSubId}
             trashSlot={trashButton}
             onOpen3D={onOpen3D}
+            onDrawObstacle={onDrawObstacle}
           />
         )}
     </div>
@@ -1787,6 +1790,7 @@ function SoilSurveyTabPanel({
   setDraggingSubId,
   trashSlot,
   onOpen3D,
+  onDrawObstacle,
 }: {
   tab: SoilSurveyTab;
   allTabs: SoilSurveyTab[];
@@ -1797,6 +1801,7 @@ function SoilSurveyTabPanel({
   setDraggingSubId: (id: string | null) => void;
   trashSlot: React.ReactNode;
   onOpen3D?: (layerId: string, tabId: string, subId: string) => void;
+  onDrawObstacle?: (layerId: string, tabId: string, shape: 'polygon' | 'rectangle' | 'circle') => void;
 }) {
   const [activeSub, setActiveSub] = useState<string | null>(tab.substances[0]?.id ?? null);
   const [addingSubstance, setAddingSubstance] = useState(false);
@@ -1820,6 +1825,10 @@ function SoilSurveyTabPanel({
     const next = allTabs.map((t) => (t.id === tab.id ? { ...t, ...patch } : t));
     onUpdateLayer(layer.id, { soilSurveyTabs: next });
   };
+  const obstacles = tab.obstacles ?? [];
+  const updateObstacle = (id: string, patch: Partial<ObstacleZone>) =>
+    updateTab({ obstacles: obstacles.map((o) => (o.id === id ? { ...o, ...patch } : o)) });
+  const removeObstacle = (id: string) => updateTab({ obstacles: obstacles.filter((o) => o.id !== id) });
   const updateSubstance = (subId: string, patch: Partial<GwConcSubstance>) => {
     updateTab({ substances: tab.substances.map((s) => (s.id === subId ? { ...s, ...patch } : s)) });
   };
@@ -1889,17 +1898,24 @@ function SoilSurveyTabPanel({
     setCellEditing(null);
   };
 
-  // 各深度層「閾值以上面積」+ 體積（Σ 面積×間隔）。
-  const areaStats = useMemo(() => {
-    if (!activeSubstance) return { perDepth: [] as Array<{ depth: string; area: number }>, volume: 0 };
-    const perDepth = depthKeys.map((dk) => {
-      const samples = collectSoilSurveySamplesForDepth(layer, tab.id, activeSubstance.id, dk);
-      const area = samples.length >= 3 ? areaAboveThreshold(samples, threshold, model) : 0;
-      return { depth: dk, area };
+  // 各深度層「閾值以上面積」+ 堆疊體積（與 3D 一致：同一個 buildSurveyVolume，含缺層補估與障礙物挖空）。
+  const surveyVol = useMemo(() => {
+    if (!activeSubstance) return null;
+    return buildSurveyVolume({
+      layer,
+      tabId: tab.id,
+      subId: activeSubstance.id,
+      depthKeys,
+      interval,
+      threshold,
+      monitorConc: activeSubstance.monitorConc,
+      controlConc: activeSubstance.controlConc,
+      substanceName: activeSubstance.name,
+      unit: activeSubstance.unit ?? '',
+      obstacles: tab.obstacles,
+      fillGaps: tab.fillGaps,
     });
-    const volume = perDepth.reduce((acc, d) => acc + d.area * interval, 0);
-    return { perDepth, volume };
-  }, [layer, tab.id, activeSubstance, depthKeys, threshold, model, interval]);
+  }, [layer, tab.id, tab.obstacles, tab.fillGaps, activeSubstance, depthKeys, interval, threshold]);
 
   const handleGenerateContour = () => {
     if (!activeSubstance) return;
@@ -2249,12 +2265,18 @@ function SoilSurveyTabPanel({
 
           <div className="soil-survey-area-bar">
             <span className="soil-survey-area-title">閾值 ≥ {threshold} 面積</span>
-            {areaStats.perDepth.map((d) => (
-              <span key={d.depth} className="soil-survey-area-chip">
-                {depthRangeLabel(d.depth, interval)}：{d.area > 0 ? fmtArea(d.area) : '—'}
+            {(surveyVol?.slices ?? []).map((s) => (
+              <span
+                key={s.topKey}
+                className={`soil-survey-area-chip${s.estimated ? ' is-estimated' : ''}`}
+                title={s.estimated ? '此層點太少，由上下層垂向內插推估' : undefined}
+              >
+                {depthRangeLabel(s.topKey, interval)}{s.estimated ? '*' : ''}：{s.area > 0 ? fmtArea(s.area) : '—'}
               </span>
             ))}
-            <span className="soil-survey-vol">總體積 ≈ {areaStats.volume > 0 ? `${areaStats.volume.toFixed(0)} m³` : '—'}</span>
+            <span className="soil-survey-vol">
+              總體積 ≈ {surveyVol && surveyVol.volumeStack > 0 ? `${Math.round(surveyVol.volumeStack).toLocaleString()} m³` : '—'}
+            </span>
           </div>
 
           <div className="hydro-bottom-bar">
@@ -2270,7 +2292,69 @@ function SoilSurveyTabPanel({
               disabled={!onOpen3D || !activeSubstance}
               title="3D 等濃度線渲染 + 體積（堆疊切片 / 平滑曲面）"
             >3D 體積</button>
+            <label className="soil-survey-fillgaps" title="某深度層點太少（<3）時，用上下層垂向內插補估，堆疊不缺層">
+              <input
+                type="checkbox"
+                checked={tab.fillGaps !== false}
+                onChange={(e) => updateTab({ fillGaps: e.target.checked })}
+              />
+              缺層補估
+            </label>
             <span className="hydro-unit-hint">※ 模型 {model.toUpperCase()}・單位 {activeSubstance.unit?.trim() || '—'}</span>
+          </div>
+
+          <div className="soil-obstacle-bar">
+            <div className="soil-obstacle-head">
+              <span className="soil-obstacle-title">障礙物排除</span>
+              <span className="soil-obstacle-add">
+                新增：
+                <button className="btn xs" disabled={!onDrawObstacle} onClick={() => onDrawObstacle?.(layer.id, tab.id, 'polygon')}>多邊形</button>
+                <button className="btn xs" disabled={!onDrawObstacle} onClick={() => onDrawObstacle?.(layer.id, tab.id, 'rectangle')}>矩形</button>
+                <button className="btn xs" disabled={!onDrawObstacle} onClick={() => onDrawObstacle?.(layer.id, tab.id, 'circle')}>圓形</button>
+              </span>
+            </div>
+            {obstacles.length === 0 ? (
+              <p className="hint" style={{ margin: 0 }}>在地圖畫形狀 → 設深度區間 → 打勾生效，該範圍在該深度挖空（不計入面積/體積）。</p>
+            ) : (
+              obstacles.map((ob, i) => (
+                <div className="soil-obstacle-row" key={ob.id}>
+                  <input
+                    type="checkbox"
+                    checked={ob.enabled}
+                    onChange={(e) => updateObstacle(ob.id, { enabled: e.target.checked })}
+                    title="打勾生效"
+                  />
+                  <span className="soil-obstacle-shape" title={ob.shape}>
+                    {ob.shape === 'circle' ? '◯' : ob.shape === 'rectangle' ? '▭' : '▱'}
+                  </span>
+                  <input
+                    className="cell-input soil-obstacle-label"
+                    value={ob.label ?? `障礙物 ${i + 1}`}
+                    onChange={(e) => updateObstacle(ob.id, { label: e.target.value })}
+                  />
+                  <span className="soil-obstacle-depth">
+                    深度
+                    <input
+                      className="cell-input soil-survey-num"
+                      type="number"
+                      step="any"
+                      value={ob.depthTop}
+                      onChange={(e) => { const n = parseFloat(e.target.value); if (Number.isFinite(n)) updateObstacle(ob.id, { depthTop: n }); }}
+                    />
+                    ~
+                    <input
+                      className="cell-input soil-survey-num"
+                      type="number"
+                      step="any"
+                      value={ob.depthBottom}
+                      onChange={(e) => { const n = parseFloat(e.target.value); if (Number.isFinite(n)) updateObstacle(ob.id, { depthBottom: n }); }}
+                    />
+                    m
+                  </span>
+                  <button className="btn xs danger" onClick={() => removeObstacle(ob.id)}>刪</button>
+                </div>
+              ))
+            )}
           </div>
         </>
       )}

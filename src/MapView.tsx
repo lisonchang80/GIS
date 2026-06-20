@@ -12,7 +12,7 @@ import {
   TerraDrawFreehandMode,
 } from 'terra-draw';
 import { TerraDrawMapLibreGLAdapter } from 'terra-draw-maplibre-gl-adapter';
-import type { BaseMapOption, VectorLayer, WaterLevelArrows, WaterLevelFill, WaterLevelLines } from './types';
+import type { BaseMapOption, ObstacleZone, VectorLayer, WaterLevelArrows, WaterLevelFill, WaterLevelLines } from './types';
 import { buildBasemapStyle, basemapTiles } from './basemaps';
 import { ensurePointIcon, pointIconId, SHAPE_IMG_SIZE, SHAPE_DRAW_RATIO } from './pointShapes';
 import type { PointShape } from './types';
@@ -46,9 +46,40 @@ interface Props {
   pickMode?: boolean;
   onPick?: (lng: number, lat: number) => void;
   onDateLabelMove?: (id: string, lng: number, lat: number) => void;
+  obstacles?: ObstacleZone[];
 }
 
-export function MapView({ basemap, basemapVersionIndex, basemapOpacity, layers, onMapReady, onDrawReady, pickMode, onPick, onDateLabelMove }: Props) {
+// 障礙物 overlay：半透明灰填色 + 虛線框，讓使用者在地圖看到/對位排除區。
+function applyObstacleOverlay(map: MLMap, obstacles: ObstacleZone[]): void {
+  const fc = {
+    type: 'FeatureCollection' as const,
+    features: obstacles.map((o) => ({
+      type: 'Feature' as const,
+      geometry: o.geometry,
+      properties: { enabled: !!o.enabled },
+    })),
+  };
+  const src = map.getSource('obstacle-overlay-src') as maplibregl.GeoJSONSource | undefined;
+  if (src) {
+    src.setData(fc);
+    return;
+  }
+  map.addSource('obstacle-overlay-src', { type: 'geojson', data: fc });
+  map.addLayer({
+    id: 'obstacle-overlay-fill',
+    type: 'fill',
+    source: 'obstacle-overlay-src',
+    paint: { 'fill-color': '#9ca3af', 'fill-opacity': ['case', ['get', 'enabled'], 0.4, 0.12] },
+  });
+  map.addLayer({
+    id: 'obstacle-overlay-line',
+    type: 'line',
+    source: 'obstacle-overlay-src',
+    paint: { 'line-color': '#4b5563', 'line-width': 1.5, 'line-dasharray': [2, 2] },
+  });
+}
+
+export function MapView({ basemap, basemapVersionIndex, basemapOpacity, layers, onMapReady, onDrawReady, pickMode, onPick, onDateLabelMove, obstacles }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MLMap | null>(null);
   const drawRef = useRef<TerraDraw | null>(null);
@@ -61,6 +92,16 @@ export function MapView({ basemap, basemapVersionIndex, basemapOpacity, layers, 
   const dateMarkersRef = useRef<Map<string, maplibregl.Marker>>(new Map());
   const onDateLabelMoveRef = useRef(onDateLabelMove);
   onDateLabelMoveRef.current = onDateLabelMove;
+  const obstaclesRef = useRef<ObstacleZone[]>(obstacles ?? []);
+  obstaclesRef.current = obstacles ?? [];
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const apply = () => applyObstacleOverlay(map, obstaclesRef.current);
+    if (map.isStyleLoaded()) apply();
+    else map.once('idle', apply);
+  }, [obstacles]);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;

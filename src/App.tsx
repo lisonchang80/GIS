@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Map as MLMap } from 'maplibre-gl';
 import type { TerraDraw } from 'terra-draw';
 import type { Feature, FeatureCollection } from 'geojson';
@@ -85,6 +85,7 @@ export default function App() {
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
   const [currentProjectId, setCurrentProjectId] = useState<number | null>(null);
   const [iso3DTarget, setIso3DTarget] = useState<{ layerId: string; tabId: string; subId: string } | null>(null);
+  const [obstacleCapture, setObstacleCapture] = useState<{ layerId: string; tabId: string; shape: 'polygon' | 'rectangle' | 'circle' } | null>(null);
 
   const toggleAttributes = useCallback((id: string) => {
     setAttributesLayerId((prev) => (prev === id ? null : id));
@@ -267,6 +268,58 @@ export default function App() {
       console.warn('setMode failed', e);
     }
   }, [drawMode]);
+
+  // 障礙物擷取：使用者按「新增障礙物(形狀)」→ 進入該繪製模式；畫完(finish)抓幾何寫進該分頁。
+  const handleDrawObstacle = useCallback(
+    (layerId: string, tabId: string, shape: 'polygon' | 'rectangle' | 'circle') => {
+      setObstacleCapture({ layerId, tabId, shape });
+      setDrawMode(shape as DrawMode);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const draw = drawRef.current;
+    if (!draw || !obstacleCapture) return;
+    const onFinish = (id: string | number) => {
+      const feat = draw.getSnapshot().find((f) => f.id === id);
+      const geom = feat?.geometry;
+      if (geom && geom.type === 'Polygon') {
+        const cap = obstacleCapture;
+        setLayers((prev) =>
+          prev.map((l) => {
+            if (l.id !== cap.layerId) return l;
+            const tabs = (l.soilSurveyTabs ?? []).map((t) => {
+              if (t.id !== cap.tabId) return t;
+              const ob = {
+                id: crypto.randomUUID(),
+                shape: cap.shape,
+                geometry: JSON.parse(JSON.stringify(geom)) as typeof geom,
+                depthTop: 0,
+                depthBottom: t.maxDepth ?? 4,
+                enabled: true,
+              };
+              return { ...t, obstacles: [...(t.obstacles ?? []), ob] };
+            });
+            return { ...l, soilSurveyTabs: tabs };
+          }),
+        );
+      }
+      try { draw.removeFeatures([id]); } catch { /* noop */ }
+      setObstacleCapture(null);
+      setDrawMode('static');
+    };
+    draw.on('finish', onFinish);
+    return () => {
+      try { draw.off('finish', onFinish); } catch { /* noop */ }
+    };
+  }, [obstacleCapture]);
+
+  const activeObstacles = useMemo(() => {
+    if (!attributesLayerId) return [];
+    const l = layers.find((x) => x.id === attributesLayerId);
+    return (l?.soilSurveyTabs ?? []).flatMap((t) => t.obstacles ?? []);
+  }, [attributesLayerId, layers]);
 
   useEffect(() => {
     if (!initialized || currentProjectId == null) return;
@@ -877,6 +930,7 @@ export default function App() {
           pickMode={!!pickingCoords || !!addPointTarget}
           onPick={handleMapPick}
           onDateLabelMove={handleDateLabelMove}
+          obstacles={activeObstacles}
         />
         <Legend layers={layers} />
         {error && (
@@ -904,6 +958,7 @@ export default function App() {
             onStartAddPointPick={handleStartAddPointPick}
             addPointPickActive={addPointTarget === layer.id}
             onOpen3D={(layerId, tabId, subId) => setIso3DTarget({ layerId, tabId, subId })}
+            onDrawObstacle={handleDrawObstacle}
           />
         );
       })()}

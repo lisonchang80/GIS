@@ -192,14 +192,13 @@ export function MapView({ basemap, basemapVersionIndex, basemapOpacity, layers, 
       syncLayers(map, layers);
       return;
     }
-    const onReady = () => {
-      if (!map.isStyleLoaded()) return;
-      map.off('styledata', onReady);
-      syncLayers(map, layersRef.current);
-    };
-    map.on('styledata', onReady);
+    // 樣式尚未就緒（多半是底圖/資料來源仍在載入，例如剛切換專案、匯入、生成等濃度線）。
+    // 用 'idle'（所有來源/圖磚載完才觸發）重試；'styledata' 在來源「載完」時不一定再次觸發，
+    // 會導致同步遺失、直到重新整理才生效。
+    const run = () => syncLayers(map, layersRef.current);
+    map.once('idle', run);
     return () => {
-      map.off('styledata', onReady);
+      map.off('idle', run);
     };
   }, [layers]);
 

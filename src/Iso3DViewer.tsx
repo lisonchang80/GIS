@@ -307,7 +307,7 @@ async function renderPlotly(
   // Z 軸真實深度刻度（公尺）
   const dStep = Math.max(1, Math.round(vol.maxDepthM / 5));
   const tickvals: number[] = []; const ticktext: string[] = [];
-  for (let d = 0; d <= vol.maxDepthM + 1e-9; d += dStep) { tickvals.push(-d); ticktext.push(`${d}`); }
+  for (let d = 0; d <= vol.maxDepthM + 1e-9; d += dStep) { tickvals.push(-d); ticktext.push(`${d} m`); }
   // X/Y/Z 全用真實公尺；深度以 aspectratio 視覺誇張（單位一致，不假造資料值）
   const spanX = (Math.max(...xM) - Math.min(...xM)) || 1;
   const spanY = (Math.max(...yM) - Math.min(...yM)) || 1;
@@ -320,9 +320,11 @@ async function renderPlotly(
     scene: {
       aspectmode: 'manual',
       aspectratio: { x: spanX / maxH, y: spanY / maxH, z: 0.7 },
-      xaxis: { ...axis, title: '東西 X (m)' },
-      yaxis: { ...axis, title: '南北 Y (m)' },
-      zaxis: { ...axis, title: '深度 (m)', tickvals, ticktext },
+      // Plotly 3.x：軸標題須用 { text }（字串簡寫不再生效，會退回預設 x/y/z 無單位）。
+      // 三軸統一公尺：X/Y 刻度加 ' m' 後綴，Z 刻度文字直接帶 m。
+      xaxis: { ...axis, title: { text: '東西 X (m)' }, ticksuffix: ' m' },
+      yaxis: { ...axis, title: { text: '南北 Y (m)' }, ticksuffix: ' m' },
+      zaxis: { ...axis, title: { text: '深度 (m)' }, tickvals, ticktext },
     },
   };
   await Plotly.newPlot(container, [trace], layout, { responsive: true, displaylogo: false });

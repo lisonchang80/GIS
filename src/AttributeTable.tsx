@@ -1329,7 +1329,7 @@ export function AttributeTable({
 
         {activeTab === 'main' && (
         <div className="table-wrap">
-          <table className="attr-table">
+          <table className="attr-table attr-table-fluid">
             <thead>
               <tr>
                 <th className="row-num">#</th>

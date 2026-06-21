@@ -888,7 +888,12 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" style={{ '--panel-width': `${panelWidth}px` } as React.CSSProperties}>
+      <div className="rotate-gate" role="alert">
+        <div className="rotate-gate-icon" aria-hidden>⟳</div>
+        <div className="rotate-gate-title">請將手機轉為橫向</div>
+        <div className="rotate-gate-sub">本地圖工作台需要較寬的畫面，橫向操作較順手</div>
+      </div>
       <LayerPanel
         width={panelWidth}
         basemaps={BASEMAPS}

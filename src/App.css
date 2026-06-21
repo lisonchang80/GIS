@@ -925,7 +925,7 @@ body.resizing-x {
 .bottom-dock {
   position: fixed;
   bottom: 0;
-  left: 320px;
+  left: var(--panel-width, 320px);
   right: 0;
   background: var(--panel);
   border-top: 1px solid var(--border);
@@ -1243,6 +1243,17 @@ body.resizing-x {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 一般要素屬性表：欄寬隨內容、寬度不足時整表水平捲動（而非把欄位擠到看不清） */
+.attr-table-fluid {
+  table-layout: auto;
+  min-width: max-content;
+}
+
+.attr-table-fluid th,
+.attr-table-fluid td {
+  max-width: 240px;
 }
 
 .attr-table th {
@@ -2621,4 +2632,51 @@ body.resizing-x {
 .legend-main-line {
   margin-left: auto;
   flex-shrink: 0;
+}
+
+/* 手機直向鎖定：要求轉為橫向才操作（只針對觸控小螢幕，桌機/平板不受影響）。
+   版面屬性都放基底規則，只用 media query 切換 display。 */
+.rotate-gate {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 32px;
+  text-align: center;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.rotate-gate-icon {
+  font-size: 64px;
+  line-height: 1;
+  color: var(--accent);
+  animation: rotate-hint 2.4s ease-in-out infinite;
+}
+
+.rotate-gate-title {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.rotate-gate-sub {
+  font-size: 13px;
+  color: var(--muted);
+  max-width: 260px;
+  line-height: 1.5;
+}
+
+@media (orientation: portrait) and (max-width: 540px) and (pointer: coarse) {
+  .rotate-gate {
+    display: flex;
+  }
+}
+
+@keyframes rotate-hint {
+  0%, 45% { transform: rotate(0deg); }
+  55%, 100% { transform: rotate(90deg); }
 }

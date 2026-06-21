@@ -29,13 +29,16 @@ export function depthMid(topKey: string, interval?: number): number {
   return parseFloat(topKey) + step / 2;
 }
 
+// 濃度 ≤ ZERO_EPS（含負值已歸 0）視為「無」→ 不著色（白＝渲染時跳過/透明）。
+// 用近零絕對值而非 M·1e-4，確保任何正濃度都會上色、只有真正等於 0 才透明。
+const ZERO_EPS = 1e-6;
+
 // ---- 濃度 → 分級顏色（與 2D 等濃度線 makeGwConcDefaults 完全一致）----
 export function colorForConc(value: number, M?: number, C?: number): string {
+  if (value <= ZERO_EPS) return '#ffffff'; // ≤0 → 無色
   if (typeof M !== 'number' || typeof C !== 'number' || M <= 0 || C <= M) {
     return '#ef4444'; // 無雙標準 → 單色（紅）
   }
-  const eps = M * 1e-4;
-  if (value < eps) return '#ffffff';
   if (value < M / 2) return '#22c55e';
   if (value < M) return '#eab308';
   if (value < C) return '#f97316';
@@ -52,13 +55,10 @@ const BAND_LABEL: Record<string, string> = {
 function bandPlan(threshold: number, valueMax: number, M?: number, C?: number): { breaks: number[]; colors: string[] } {
   const top = valueMax + Math.max(Math.abs(valueMax), 1) * 1e-6;
   let interior: number[] = [];
-  let lower = threshold;
+  // 下界取「閾值」與「近零」較大者：閾值 0 時 → 只有 >0 才上色（等於 0 不著色）。
+  const lower = Math.max(threshold, ZERO_EPS);
   if (typeof M === 'number' && typeof C === 'number' && M > 0 && C > M) {
-    const eps = M * 1e-4;
-    lower = Math.max(threshold, eps);
     interior = [M / 2, M, C].filter((v) => v > lower + 1e-9 && v < top);
-  } else {
-    lower = Math.max(threshold, 0);
   }
   if (!(top > lower)) return { breaks: [], colors: [] };
   const breaks = [lower, ...interior, top];
@@ -181,7 +181,7 @@ export function buildSurveyVolume(p: SurveyVolumeParams): SurveyVolume {
   const proj = (lng: number, lat: number): [number, number] => [(lng - lng0) * kx, (lat - lat0) * LAT_M];
 
   let valueMax = 0;
-  for (const s of allSamples) if (s.z > valueMax) valueMax = s.z;
+  for (const s of allSamples) { const z = Math.max(0, s.z); if (z > valueMax) valueMax = z; }
 
   // 共用規則格網（含 10% 外擴）
   const xs = allSamples.map((s) => s.x);
@@ -200,7 +200,8 @@ export function buildSurveyVolume(p: SurveyVolumeParams): SurveyVolume {
   const rawGrids: (number[] | null)[] = perDepth.map(({ samples }) => {
     if (samples.length < 3) return null;
     const g = new Array(N * N);
-    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) g[j * N + i] = idw(X[i], Y[j], samples);
+    // 負值（內插過衝等）一律歸 0
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) g[j * N + i] = Math.max(0, idw(X[i], Y[j], samples));
     return g;
   });
   const { filled: grids, estimated } = fillGaps
@@ -293,6 +294,7 @@ export function buildSurveyVolume(p: SurveyVolumeParams): SurveyVolume {
   const zBot = depths[depths.length - 1] + interval / 2;
   const zSteps = Math.max(8, depths.length * 4);
   const dz = (zBot - zTop) / zSteps;
+  const vLow = Math.max(threshold, ZERO_EPS); // 與切片一致：等於 0（或負值歸 0）不計入體積
   let volumeSmooth = 0;
   for (let zi = 0; zi < zSteps; zi++) {
     const z = zTop + (zi + 0.5) * dz;
@@ -312,7 +314,7 @@ export function buildSurveyVolume(p: SurveyVolumeParams): SurveyVolume {
         else if (Number.isFinite(v0)) v = v0;
         else if (Number.isFinite(v1)) v = v1;
         else continue;
-        if (v < threshold) continue;
+        if (v < vLow) continue;
         if (obs.length && obs.some(({ feat }) => turf.booleanPointInPolygon([X[i], Y[j]], feat))) continue;
         volumeSmooth += dxM * dyM * dz;
       }

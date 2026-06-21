@@ -48,7 +48,7 @@ function makeGwConcDefaults(sub: GwConcSubstance): {
   };
   let fill: WaterLevelFill | undefined;
   if (typeof M === 'number' && typeof C === 'number' && M > 0 && C > M) {
-    const eps = M * 0.0001;
+    const eps = 1e-6; // 只有「等於 0」才透明；任何正濃度都上色（與 3D iso3d ZERO_EPS 對齊）
     const bands: WaterLevelCustomBand[] = [
       { from: 0, to: eps, color: '#ffffff' },
       { from: eps, to: M / 2, color: '#22c55e' },
@@ -1922,7 +1922,7 @@ function SoilSurveyTabPanel({
     for (const dk of depthKeys) {
       const samples = collectSoilSurveySamplesForDepth(layer, tab.id, activeSubstance.id, dk);
       if (samples.length < 3) continue;
-      const feats = buildContourLayerFeatures(layer, dk, fill, lines, arrows, { model, samples, thresholds });
+      const feats = buildContourLayerFeatures(layer, dk, fill, lines, arrows, { model, samples, thresholds, contourOpts: { clampNegative: true } });
       if (feats.length === 0) continue;
       goodDepths.push(dk);
       allFeatures.push(...feats);
@@ -1959,6 +1959,7 @@ function SoilSurveyTabPanel({
         sourceSubId: activeSubstance.id,
         depthInterval: interval,
         legend: { visible: true },
+        clampNegative: true, // 負值內插過衝歸 0
         fill,
         lines,
         arrows,

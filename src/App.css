@@ -41,6 +41,26 @@ body,
   flex-direction: column;
 }
 
+.panel-resize-handle {
+  flex: 0 0 5px;
+  width: 5px;
+  align-self: stretch;
+  cursor: ew-resize;
+  background: var(--border);
+  z-index: 5;
+  transition: background 0.15s;
+}
+
+.panel-resize-handle:hover,
+body.resizing-x .panel-resize-handle {
+  background: var(--accent);
+}
+
+body.resizing-x {
+  cursor: ew-resize;
+  user-select: none;
+}
+
 .panel-section {
   padding: 16px;
   border-bottom: 1px solid var(--border);

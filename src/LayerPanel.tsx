@@ -26,6 +26,7 @@ interface Props {
   activeAttributesLayerId: string | null;
   activeStyleLayerId: string | null;
   onFiles: (files: FileList) => void;
+  width: number;
   beforeBasemap?: ReactNode;
   children?: ReactNode;
 }
@@ -50,7 +51,7 @@ export function LayerPanel(p: Props) {
   const PAN_PX = 120;
 
   return (
-    <aside className="panel">
+    <aside className="panel" style={{ width: p.width, minWidth: p.width, flex: '0 0 auto' }}>
       <div className="panel-section panel-header">
         <div className="panel-header-top">
           <h1 className="panel-title">Web GIS</h1>

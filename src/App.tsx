@@ -84,6 +84,10 @@ export default function App() {
   const [addPointTarget, setAddPointTarget] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
   const [currentProjectId, setCurrentProjectId] = useState<number | null>(null);
+  const [panelWidth, setPanelWidth] = useState<number>(() => {
+    const saved = Number(localStorage.getItem('gis-panel-width'));
+    return saved >= 280 && saved <= 720 ? saved : 320;
+  });
   const [iso3DTarget, setIso3DTarget] = useState<{ layerId: string; tabId: string; subId: string } | null>(null);
   const [obstacleCapture, setObstacleCapture] = useState<{ layerId: string; tabId: string; shape: 'polygon' | 'rectangle' | 'circle' } | null>(null);
 
@@ -855,6 +859,26 @@ export default function App() {
     }
   }, [currentProjectId, applyProject]);
 
+  const startPanelResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = panelWidth;
+    let latest = startW;
+    const onMove = (ev: PointerEvent) => {
+      latest = Math.max(280, Math.min(720, startW + (ev.clientX - startX)));
+      setPanelWidth(latest);
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      document.body.classList.remove('resizing-x');
+      localStorage.setItem('gis-panel-width', String(latest));
+    };
+    document.body.classList.add('resizing-x');
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
   if (!initialized) {
     return (
       <div className="loading-screen">
@@ -866,6 +890,7 @@ export default function App() {
   return (
     <div className="app-shell">
       <LayerPanel
+        width={panelWidth}
         basemaps={BASEMAPS}
         activeBasemap={basemapId}
         onBasemapChange={handleBasemapChange}
@@ -919,6 +944,13 @@ export default function App() {
           onBuffer={handleBuffer}
         />
       </LayerPanel>
+      <div
+        className="panel-resize-handle"
+        onPointerDown={startPanelResize}
+        title="拖曳調整側欄寬度"
+        role="separator"
+        aria-orientation="vertical"
+      />
       <main className="map-area">
         <MapView
           basemap={basemap}

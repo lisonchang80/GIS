@@ -42,11 +42,12 @@ export function LayerIcon({ layer, onClick }: Props) {
       return `M ${cx} ${top} C ${cx - w} ${top + h * 0.5}, ${cx - w} ${bot - h * 0.05}, ${cx} ${bot} C ${cx + w} ${bot - h * 0.05}, ${cx + w} ${top + h * 0.5}, ${cx} ${top} Z`;
     };
     if (isSoilSurvey) {
-      // 內紅外綠水滴：外層綠描邊水滴 + 內層紅填色小水滴（對應等濃度核紅、外圍綠）
+      // 紅黃綠三層水滴：外綠 → 中黃 → 內紅，對應等濃度分級（低→中→高）
       content = (
         <g strokeLinejoin="round" fillOpacity={opacity} strokeOpacity={opacity}>
           <path d={dropPath(center, 2.5, 21.5)} fill="#dcfce7" stroke="#22c55e" strokeWidth={2} />
-          <path d={dropPath(center, 10, 19)} fill="#ef4444" stroke="#dc2626" strokeWidth={1} />
+          <path d={dropPath(center, 8, 20)} fill="#fde68a" stroke="#eab308" strokeWidth={1.4} />
+          <path d={dropPath(center, 13, 18.7)} fill="#ef4444" stroke="#dc2626" strokeWidth={1} />
         </g>
       );
     } else if (isGwConc) {

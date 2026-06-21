@@ -68,13 +68,22 @@ op.open(urllib.request.Request(f"http://127.0.0.1:8011/api/projects/{pid}",
 ## Step 5 — 量 DOM 驗證（不要截圖）
 `preview_eval` 跑 IIFE：找按鈕點開（`▤` 屬性表、`.dock-tab`、`.hydro-bottom-bar button` 等）、讀文字斷言。
 - 控制元件多是 React controlled input → **不能只設 `.value`**（commit 讀不到 state）；要嘛 `.click()` checkbox/button，要嘛用 `preview_fill`。
+- `<select>`（如「模型」下拉）要觸發 React onChange：用原型 setter 再 dispatch —
+  `const set=Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set; set.call(sel,'tin'); sel.dispatchEvent(new Event('change',{bubbles:true}))`。
 - `preview_console_logs {level:'error'}` 收尾確認無錯。
+
+## Step 5.5 — 驗 DOM 量不到的狀態（WebGL / Plotly / maplibre）
+Three.js 幾何、Plotly gl3d 軸標、maplibre map 實例都**不在 DOM**，截圖又 timeout。手法：**暫時把該 JS 物件曝到 `window`，`preview_eval` 讀出量化驗證，commit 前移除**（標 `// TEMP-DEBUG`；移除後 `grep -rn '__名稱\|TEMP-DEBUG' src/` 確認清乾淨再 `tsc`）。實證三招：
+- **3D 切片逐色面積**：Iso3DViewer 在 `vol` useMemo 後加 `(window as any).__iso3dVol = vol`。eval 用鞋帶公式(shoelace)算 `vol.slices[k].bands[].polysM` 各色面積（polysM 已是本地公尺直接比）。證「2D 等濃度線 vs 3D 切片著色一致」→ 逐深度逐色對到 ~1% 即一致；差很多多半是 **bbox 外擴比例**或 **interpolator** 不一致。
+- **Plotly 軸真有套用**：gl3d 軸標在 WebGL，DOM 讀不到 → 讀 `gd._fullLayout.scene.xaxis.title.text`（`gd`＝`.iso3d-canvas` 子層中含 `_fullLayout` 者）。Plotly 3.x **字串 title 簡寫失效**，要 `title:{text}` 否則退回預設 x/y/z（踩過）。
+- **maplibre 反應性/強制分支**：load handler 加 `window.__gisMap=map`；可 `__gisMap.isStyleLoaded=()=>false` 強制走 idle fallback，再 `__gisMap.panBy([3,0])` 觸發重繪→idle，驗 source 有無被同步（驗「改 state 後地圖沒更新」類 bug）。
+- 純資料面：contour 圖層 band features 可直接 `fetch('/api/projects/{id}')` 撈 `data.features`（`__kind==='band'`/`__color`/`__date`）算面積/顏色，免碰地圖。
 
 ## Step 6 — 清理（每次都要做）
 1. `preview_stop`
 2. `vite.config.ts` proxy 改回 `:8000`
 3. 砍 8011：`netstat -ano | grep 127.0.0.1:8011 | grep LISTENING` 取 PID → `taskkill //PID <pid> //F`
-4. `rm -f server/_devverify.py /c/Users/hao80/AppData/Local/Temp/gis_devverify.db`
+4. `rm -f server/_devverify.py server/_devseed.py /c/Users/hao80/AppData/Local/Temp/gis_devverify.db`（種子另存 `_devseed.py` 較好維護；連 TEMP-DEBUG 曝點一併確認移除）
 5. 確認 `dist/` 還是上一個正式版（`curl -s localhost:8000/ | grep -oE 'index-[A-Za-z0-9_-]+\.js'`）、正式 server 還活著
 
 ## 完成後上線（若要）

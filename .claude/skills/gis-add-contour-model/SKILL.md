@@ -55,6 +55,14 @@ function makeInterpolator(model: ContourModel | undefined, samples: IDWSample[])
 }
 ```
 
+**`makeInterpolator` 已 `export`**（2026-06 起）：除了 2D 等濃度線（`buildIDWGrid`）外，**3D 體積也用它**，見下方 Step 3.6。新模型接進這個工廠後，2D 與 3D 會自動同時生效。
+
+### Step 3.6 — 3D 土壤污染調查體積也吃同一個 model（容易漏！）
+
+`src/iso3d.ts` 的 `buildSurveyVolume` 每個深度層各自 `makeInterpolator(p.model, samples)` 建一次內插器再對 32×32 lattice 取值。**曾經這裡寫死 `idw()`，導致選 TIN/Kriging 時 3D 完全沒變、只有 2D 變**（2026-06 修）。新增模型時這裡無需改 code（已透傳 `p.model`），但務必驗 3D：切到新模型，3D 切片/體積要跟著變。
+
+⚠️ **2D 與 3D 必須用同一組格網參數才會著色一致**：`iso3d.ts` 自建 lattice 的 bbox 外擴比例（目前 `0.15`）要與 `buildIDWGrid` 的 `0.15` 一致；不一致時低濃度綠色邊緣會差一圈，TIN/Kriging 尤其明顯（2026-06 對齊 10%→15% 修）。負值在 iso3d 以 `Math.max(0, interp(...))` 歸 0，與 2D 的 `clampNegative` 對應。
+
 ### 範例：Indicator Kriging 怎麼接的
 
 Indicator 模式不是獨立 interpolator，而是「資料前處理 → Kriging → 後處理」。前處理在 `buildIDWGrid` 內：
@@ -117,4 +125,5 @@ export interface ThresholdLine {
 - **不要**為新模型另建 grid 函式 — 走 `makeInterpolator` 工廠就好
 - **不要**忘了 `buildFlowArrowsForLayer` 也要走相同 model（目前 `options.model` 已透傳，無需改動）
 - **不要**忘了同步 `ContourModel` 兩處（types.ts 與 contour.ts），TypeScript 會給你錯但容易漏一邊
+- **不要**只驗 2D 就收工 — 土壤污染調查的 **3D 體積（iso3d.ts）也吃 model**，要一起驗（見 Step 3.6）
 - **不要**把 `clampNegative` / `logTransform` 寫死在新模型內，這些是正交的 `ContourOptions`，由使用者切換

@@ -41,6 +41,7 @@ if __name__ == "__main__":
 跑：`"server/.venv/Scripts/python.exe" -m server._devverify`（背景；從 GIS root 跑，`-m` 才吃得到 `server` 套件）。
 - **重點**：`db.DB_PATH` 與 `routes.py` 的 `GIS_DEV_LOGIN`/`GIS_COOKIE_SECURE` 都在 import 時讀，所以 env + DB_PATH 要在 `uvicorn.run` 之前設好。
 - ⚠️ **啟動 race**：backend 剛起來時**第一個 API 請求常失敗**（POST 回沒有 `id`、PUT 422/405）→ `sleep 2~3` 再打，或失敗就重試一次。
+- ⚠️ **`cd … && cmd &` 的 `cd` 只進背景子殼**：同一個 Bash 呼叫裡，背景指令之後接的**前景**指令（如 seed）會在工具預設 cwd（非 GIS）跑 → 噴「No such file」。每條前景指令自己帶 `cd "/d/Claude code/GIS" && …`。
 
 ## Step 3 — 用 API 灌種子專案（免手動點）
 用 cookiejar 保 session：dev-login → POST `/api/projects` 拿 id → PUT `/api/projects/{id}` 整包 ProjectState。
@@ -66,6 +67,7 @@ op.open(urllib.request.Request(f"http://127.0.0.1:8011/api/projects/{pid}",
 `sleep 3` 等重載。
 
 ## Step 5 — 量 DOM 驗證（不要截圖）
+- ⚠️ **量寬度前先 `preview_resize`**：preview 視窗預設 `innerWidth`≈0/極窄 → 側欄(320+)會吃滿、`.bottom-dock` 算出 0 寬、版面量測全錯。先 `preview_resize {width:1440,height:900}` 再量 panel/dock/responsive。
 `preview_eval` 跑 IIFE：找按鈕點開（`▤` 屬性表、`.dock-tab`、`.hydro-bottom-bar button` 等）、讀文字斷言。
 - 控制元件多是 React controlled input → **不能只設 `.value`**（commit 讀不到 state）；要嘛 `.click()` checkbox/button，要嘛用 `preview_fill`。
 - `<select>`（如「模型」下拉）要觸發 React onChange：用原型 setter 再 dispatch —

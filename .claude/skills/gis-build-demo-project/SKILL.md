@@ -33,7 +33,9 @@ description: >
 - ProjectState：`{version:1, savedAt, basemapId, basemapOpacity, projectName, layers:[…], mapView:{center:[lng,lat],zoom}}`；import 只驗 `version===1` + `layers` 是陣列。
 
 ## 場址範圍照「地號」畫（真實地籍）
-`src/landQuery.ts` 打 `https://twland.ronny.tw/index/search?lands[]=縣市,段名,地號`（逗號分隔，需 urlencode），回 GeoJSON。seed 內直接抓 N 個連號（連號通常相鄰）當 `kind:'polygon'` 的場址圖層 feature。**先用 API 探段名是否解析**（例 `臺南市,顯宮段,1`）+ 算各 parcel 中心/面積找對位置——別信網路搜尋給的座標（安順那次維基座標偏 2.6km，靠地號反查才定到真位）。
+`src/landQuery.ts` 打 `https://twland.ronny.tw/index/search?lands[]=縣市,段名,地號`（逗號分隔，需 urlencode），回 GeoJSON。seed 內直接抓官方列出的地號當 `kind:'polygon'` 的場址圖層 feature（同段多筆連號通常相鄰）。
+- **先去權威官方來源拿「地段名 + 地號清單」，別自己猜地段。** 真實污染場址多有政府公告頁（例：臺南市環保局土壤及地下水污染整治場址資訊 `epb2.tnepb.gov.tw/cpdc/.../mode02.asp?m=…`），裡面直接列出地段與每筆地號（廠區/熱點/已解除管制常分群）。先 WebFetch 該頁抓地號，再丟 twland API 驗證解析、算中心/面積定位。
+- 慘痛教訓：安順那次**沒查官方公告就自己挑了「顯宮段」**去畫，整個偏 2.6km；官方實為**安南區鹽田段**（廠區 668 系列/669、海水貯水池 659 等、東側 544-2 等共 35 筆）。先抓官方地號才一次到位。維基/搜尋座標未必錯，但**地段名一定要照官方**。
 
 ## 在 UI 驅動「生成」（preview_eval）
 - 開圖層屬性表：點該 `.layer-item` 內 textContent==='▤' 的 `.icon-btn`。

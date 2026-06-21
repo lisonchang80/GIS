@@ -1908,10 +1908,11 @@ function SoilSurveyTabPanel({
       controlConc: activeSubstance.controlConc,
       substanceName: activeSubstance.name,
       unit: activeSubstance.unit ?? '',
+      model,
       obstacles: tab.obstacles,
       fillGaps: tab.fillGaps,
     });
-  }, [layer, tab.id, tab.obstacles, tab.fillGaps, activeSubstance, depthKeys, interval, threshold]);
+  }, [layer, tab.id, tab.obstacles, tab.fillGaps, activeSubstance, depthKeys, interval, threshold, model]);
 
   const handleGenerateContour = () => {
     if (!activeSubstance) return;

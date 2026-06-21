@@ -207,7 +207,7 @@ export interface ThresholdLine {
 
 const LOG_EPS = 1e-6;
 
-function makeInterpolator(model: ContourModel | undefined, samples: IDWSample[]): (x: number, y: number) => number {
+export function makeInterpolator(model: ContourModel | undefined, samples: IDWSample[]): (x: number, y: number) => number {
   if (model === 'tin') {
     const tin = buildTinInterpolator(samples);
     return (x, y) => tin(x, y);

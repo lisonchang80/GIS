@@ -355,9 +355,10 @@ export function Iso3DViewer({
     return buildSurveyVolume({
       layer, tabId: tab.id, subId, depthKeys: buildDepthKeys(interval, maxDepth),
       interval, threshold, monitorConc: sub.monitorConc, controlConc: sub.controlConc,
-      substanceName: sub.name, unit: sub.unit ?? '', obstacles: tab.obstacles, fillGaps: tab.fillGaps,
+      substanceName: sub.name, unit: sub.unit ?? '', model: tab.model,
+      obstacles: tab.obstacles, fillGaps: tab.fillGaps,
     });
-  }, [layer, tab.id, tab.obstacles, tab.fillGaps, subId, sub, interval, maxDepth, threshold]);
+  }, [layer, tab.id, tab.obstacles, tab.fillGaps, tab.model, subId, sub, interval, maxDepth, threshold]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };

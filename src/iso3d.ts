@@ -3,7 +3,7 @@
 // 缺層垂向內插、障礙物挖空、堆疊體積(Σ面積×厚)與平滑體積(體素積分)。
 import * as turf from '@turf/turf';
 import type { Feature, FeatureCollection, MultiPolygon, Polygon } from 'geojson';
-import { collectSoilSurveySamplesForDepth, idw } from './contour';
+import { collectSoilSurveySamplesForDepth, makeInterpolator, type ContourModel } from './contour';
 import type { ObstacleZone, VectorLayer } from './types';
 
 // ---- 深度區間工具（採樣以區間為單位：0~0.5m / 0.5~1m / …）----
@@ -120,6 +120,7 @@ export interface SurveyVolumeParams {
   controlConc?: number;
   substanceName: string;
   unit: string;
+  model?: ContourModel; // idw / tin / kriging（與 2D 等濃度線同一套內插）
   obstacles?: ObstacleZone[];
   fillGaps?: boolean;
 }
@@ -196,12 +197,13 @@ export function buildSurveyVolume(p: SurveyVolumeParams): SurveyVolume {
   const yM = Y.map((l) => (l - lat0) * LAT_M);
   const depths = perDepth.map((d) => d.depth);
 
-  // 每層 z 陣列（row-major j→i），<3 點為 null
+  // 每層 z 陣列（row-major j→i），<3 點為 null。用所選模型內插（idw/tin/kriging）。
   const rawGrids: (number[] | null)[] = perDepth.map(({ samples }) => {
     if (samples.length < 3) return null;
+    const interp = makeInterpolator(p.model, samples); // 一層建一次（tin 三角網 / kriging 解一次）
     const g = new Array(N * N);
     // 負值（內插過衝等）一律歸 0
-    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) g[j * N + i] = Math.max(0, idw(X[i], Y[j], samples));
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) g[j * N + i] = Math.max(0, interp(X[i], Y[j]));
     return g;
   });
   const { filled: grids, estimated } = fillGaps

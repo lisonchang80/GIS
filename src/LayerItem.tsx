@@ -99,7 +99,9 @@ export function LayerItem(p: Props) {
     if (!wl) return;
     p.onUpdate({
       waterLevel: { ...wl, activeDate: date },
-      name: isMultiSub ? p.layer.name : date,
+      // 土壤調查圖層名稱固定為「銅 等濃度線」，切換深度只更新深度徽章；
+      // 一般水文多日圖層仍以日期當名稱。
+      name: isMultiSub || isSoilSurvey ? p.layer.name : date,
     });
   };
 

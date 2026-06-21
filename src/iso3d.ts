@@ -190,7 +190,8 @@ export function buildSurveyVolume(p: SurveyVolumeParams): SurveyVolume {
   let minX = Math.min(...xs); let maxX = Math.max(...xs);
   let minY = Math.min(...ys); let maxY = Math.max(...ys);
   const dxr = maxX - minX || 0.001; const dyr = maxY - minY || 0.001;
-  minX -= dxr * 0.1; maxX += dxr * 0.1; minY -= dyr * 0.1; maxY += dyr * 0.1;
+  // 與 2D buildIDWGrid 同樣外擴 15%，讓 3D 切片範圍/著色與 2D 等濃度線一致
+  minX -= dxr * 0.15; maxX += dxr * 0.15; minY -= dyr * 0.15; maxY += dyr * 0.15;
   const X = Array.from({ length: N }, (_, i) => minX + ((maxX - minX) * i) / (N - 1));
   const Y = Array.from({ length: N }, (_, j) => minY + ((maxY - minY) * j) / (N - 1));
   const xM = X.map((l) => (l - lng0) * kx);

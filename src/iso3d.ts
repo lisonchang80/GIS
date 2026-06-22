@@ -224,7 +224,22 @@ export function buildSurveyVolume(p: SurveyVolumeParams): SurveyVolume {
 
   const plan = bandPlan(threshold, valueMax, M, C);
 
+  // 規則格網的水平體素尺寸（公尺）：面積/體積積分都以「每格點 = 一個 dxM×dyM 體素」為單位。
+  const dxM = Math.abs(xM[1] - xM[0]);
+  const dyM = Math.abs(yM[1] - yM[0]);
+  const cellArea = dxM * dyM;
+  const vLow = Math.max(threshold, ZERO_EPS); // ≥閾值（threshold 0 時 → 只算 >0）
+  // 退化色帶要用的 bbox 矩形：外圍格點各往外擴半格，矩形面積 = N²·cellArea = 全格網積分面積。
+  const hx = (X[1] - X[0]) / 2;
+  const hy = (Y[1] - Y[0]) / 2;
+  const fullGridRect = (): Feature<Polygon> =>
+    turf.bboxPolygon([X[0] - hx, Y[0] - hy, X[N - 1] + hx, Y[N - 1] + hy]) as Feature<Polygon>;
+
   // ---- 切片（分級色帶 + 障礙物挖空）+ 堆疊面積 ----
+  // 面積一律用「規則格網體素積分」算（與 turf.isobands 無關）：直接數 ≥閾值 的格點 × cellArea。
+  // 不沿用 isobands 多邊形面積，是因為當 ≥閾值 帶填滿（近）整個格網時 marching-squares 沒有內部
+  // 等高線 → turf.isobands 退化（面積塌成 ~0／翻成 bbox 補集／逐層非單調）。isobands 只留著畫彩色
+  // 帶多邊形；某色帶填滿整個格網（無內部等高線）時改用 bbox 矩形當該色面，讓 3D 切片與面積一致。
   const slices: DepthSlice[] = [];
   let volumeStack = 0;
   perDepth.forEach((pd, k) => {
@@ -233,39 +248,71 @@ export function buildSurveyVolume(p: SurveyVolumeParams): SurveyVolume {
       slices.push({ topKey: pd.topKey, depth: pd.depth, area: 0, estimated: !!estimated[k], bands: [] });
       return;
     }
-    const fc = turf.featureCollection(
-      Array.from({ length: N * N }, (_, idx) => turf.point([X[idx % N], Y[Math.floor(idx / N)]], { z: grid[idx] })),
-    );
-    let bandsFC: FeatureCollection;
-    try {
-      bandsFC = turf.isobands(fc, plan.breaks, { zProperty: 'z' }) as FeatureCollection;
-    } catch {
-      slices.push({ topKey: pd.topKey, depth: pd.depth, area: 0, estimated: !!estimated[k], bands: [] });
-      return;
-    }
     const top = parseFloat(pd.topKey);
     const obs = obRangeOverlapsLayer(top, top + interval);
-    const byColor = new Map<string, number[][][][]>();
+    const inObstacle = (i: number, j: number) =>
+      obs.length > 0 && obs.some(({ feat }) => turf.booleanPointInPolygon([X[i], Y[j]], feat));
+
+    // 體素積分面積 + 每段（顏色）落點數。bandCounts 只看純量場本身（不扣障礙物），
+    // 障礙物之後再從色帶多邊形 difference 扣；面積則直接跳過障礙物覆蓋的格點。
     let area = 0;
-    bandsFC.features.forEach((f, i) => {
-      const color = plan.colors[i];
-      if (!color || color === '#ffffff') return;
-      let geomFeat: Feature | null = f;
+    const bandCounts = new Array(plan.breaks.length - 1).fill(0);
+    for (let j = 0; j < N; j++) {
+      for (let i = 0; i < N; i++) {
+        const v = grid[j * N + i];
+        if (v < vLow) continue;
+        for (let bi = 0; bi < bandCounts.length; bi++) {
+          if (v >= plan.breaks[bi] && (v < plan.breaks[bi + 1] || bi === bandCounts.length - 1)) {
+            bandCounts[bi]++;
+            break;
+          }
+        }
+        if (!inObstacle(i, j)) area += cellArea;
+      }
+    }
+
+    // isobands 只負責「有內部等高線」的色帶多邊形；退化色帶（填滿整格網）改用 bbox 矩形。
+    let bandsFC: FeatureCollection | null = null;
+    try {
+      const fc = turf.featureCollection(
+        Array.from({ length: N * N }, (_, idx) => turf.point([X[idx % N], Y[Math.floor(idx / N)]], { z: grid[idx] })),
+      );
+      bandsFC = turf.isobands(fc, plan.breaks, { zProperty: 'z' }) as FeatureCollection;
+    } catch {
+      bandsFC = null;
+    }
+
+    const byColor = new Map<string, number[][][][]>();
+    for (let bi = 0; bi < plan.colors.length; bi++) {
+      const color = plan.colors[bi];
+      if (!color || color === '#ffffff' || bandCounts[bi] === 0) continue;
+      // isobands 對「幾乎填滿格網」的色帶會退化：當低於閾值的小區塊落在格網邊界（而非內部孔洞），
+      // marching-squares 畫不出封閉內部等高線 → 該段多邊形塌成空殼／細條／翻成 bbox 補集。偵測法：
+      // 比較該段「格點積分面積」與 isobands 實際面積，若色帶近乎填滿（≥80% 格點）且 isobands 面積遠小
+      // 於格點面積（<50%）→ 視為退化，改用 bbox 矩形，讓 3D 切片板塊與面積 chip 一致。
+      const featFromIso = bandsFC?.features[bi] ?? null;
+      const gridBandArea = bandCounts[bi] * cellArea;
+      let isoArea = 0;
+      if (featFromIso) { try { isoArea = turf.area(featFromIso); } catch { isoArea = 0; } }
+      const degenerate =
+        bandCounts[bi] === N * N ||
+        (bandCounts[bi] >= 0.8 * N * N && isoArea < 0.5 * gridBandArea);
+      let geomFeat: Feature | null = degenerate ? fullGridRect() : featFromIso;
+      if (!geomFeat) continue;
       for (const { feat } of obs) {
         if (!geomFeat) break;
         try {
           geomFeat = turf.difference(turf.featureCollection([geomFeat as Feature<Polygon | MultiPolygon>, feat])) as Feature | null;
         } catch { /* keep */ }
       }
-      if (!geomFeat) return;
-      const g = geomFeat.geometry as Polygon | MultiPolygon | null;
-      if (!g) return;
-      area += turf.area(geomFeat);
+      const g = (geomFeat?.geometry ?? null) as Polygon | MultiPolygon | null;
+      if (!g) continue;
       const polys = g.type === 'Polygon' ? [g.coordinates] : g.coordinates;
       const list = byColor.get(color) ?? [];
       for (const poly of polys) list.push(poly.map((ring) => ring.map(([lng, lat]) => proj(lng, lat))));
       byColor.set(color, list);
-    });
+    }
+
     slices.push({
       topKey: pd.topKey, depth: pd.depth, area, estimated: !!estimated[k],
       bands: [...byColor.entries()].map(([color, polysM]) => ({ color, polysM })),
@@ -290,14 +337,11 @@ export function buildSurveyVolume(p: SurveyVolumeParams): SurveyVolume {
   }
   const field: ScalarField = { xM, yM, depths, values };
 
-  // ---- 平滑體積（體素積分：z 細分內插、障礙物挖空）----
-  const dxM = Math.abs(xM[1] - xM[0]);
-  const dyM = Math.abs(yM[1] - yM[0]);
+  // ---- 平滑體積（體素積分：z 細分內插、障礙物挖空）----（dxM/dyM/vLow 已於切片前定義）
   const zTop = depths[0] - interval / 2;
   const zBot = depths[depths.length - 1] + interval / 2;
   const zSteps = Math.max(8, depths.length * 4);
   const dz = (zBot - zTop) / zSteps;
-  const vLow = Math.max(threshold, ZERO_EPS); // 與切片一致：等於 0（或負值歸 0）不計入體積
   let volumeSmooth = 0;
   for (let zi = 0; zi < zSteps; zi++) {
     const z = zTop + (zi + 0.5) * dz;

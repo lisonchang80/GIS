@@ -603,6 +603,41 @@ export function buildContourFeaturesForLayer(
   return out;
 }
 
+/**
+ * 局部加權平面梯度（移動最小二乘 / 一次多項式）。在 (x0,y0) 對水位樣本以
+ * w = 1/(d²+h²) 加權擬合平面 z ≈ a·(x-x0)+b·(y-y0)+c，回傳梯度 (a,b)。
+ * 取代逐點對 IDW 微分——IDW 在每口井是區域極值（「靶心」），其逐點梯度會在井
+ * 附近反相/亂跳，使流向箭頭不垂直於等水位線、看起來方向錯亂。平滑平面梯度
+ * 能濾掉靶心雜訊，得到平順、垂直等水位線、一致指向下游（低水位）的流向。
+ */
+function localPlaneGradient(
+  x0: number,
+  y0: number,
+  samples: IDWSample[],
+  h2: number,
+): [number, number] | null {
+  let Sxx = 0, Sxy = 0, Syy = 0, Sx = 0, Sy = 0, Sw = 0, Sxz = 0, Syz = 0, Sz = 0;
+  for (const s of samples) {
+    const dx = s.x - x0;
+    const dy = s.y - y0;
+    const w = 1 / (dx * dx + dy * dy + h2);
+    Sxx += w * dx * dx; Sxy += w * dx * dy; Syy += w * dy * dy;
+    Sx += w * dx; Sy += w * dy; Sw += w;
+    Sxz += w * dx * s.z; Syz += w * dy * s.z; Sz += w * s.z;
+  }
+  // 解 3×3 法方程 M·[a,b,c]ᵀ = r（Cramer）
+  const det = (m: number[][]): number =>
+    m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) -
+    m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
+    m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+  const M = [[Sxx, Sxy, Sx], [Sxy, Syy, Sy], [Sx, Sy, Sw]];
+  const D = det(M);
+  if (!Number.isFinite(D) || Math.abs(D) < 1e-30) return null;
+  const Ma = [[Sxz, Sxy, Sx], [Syz, Syy, Sy], [Sz, Sy, Sw]];
+  const Mb = [[Sxx, Sxz, Sx], [Sxy, Syz, Sy], [Sx, Sz, Sw]];
+  return [det(Ma) / D, det(Mb) / D];
+}
+
 export function buildFlowArrowsForLayer(
   sourceLayer: VectorLayer,
   date: string,
@@ -611,7 +646,6 @@ export function buildFlowArrowsForLayer(
   const samples = options.samples ?? collectSamplesForDate(sourceLayer, date);
   if (samples.length < 3) return [];
   const { gridCells = 8 } = options;
-  const interpolate = makeInterpolator(options.model, samples);
   const pts = turf.featureCollection(
     samples.map((s) => turf.point([s.x, s.y], { z: s.z })),
   );
@@ -622,7 +656,9 @@ export function buildFlowArrowsForLayer(
   const cellX = dx / gridCells;
   const cellY = dy / gridCells;
   const arrowLen = Math.min(cellX, cellY) * 0.6;
-  const eps = Math.min(cellX, cellY) * 0.1;
+  // 平滑長度：約場區尺度的 1/3，足以濾除單井靶心、又保留大尺度流場彎曲。
+  const h = 0.33 * Math.max(dx, dy);
+  const h2 = h * h;
   const headLen = arrowLen * 0.32;
   const headAngle = Math.PI / 6;
   const arrows: Feature[] = [];
@@ -630,10 +666,10 @@ export function buildFlowArrowsForLayer(
     for (let j = 1; j < gridCells; j++) {
       const x = bbox[0] + i * cellX;
       const y = bbox[1] + j * cellY;
-      const gx = (interpolate(x + eps, y) - interpolate(x - eps, y)) / (2 * eps);
-      const gy = (interpolate(x, y + eps) - interpolate(x, y - eps)) / (2 * eps);
-      const fx = -gx;
-      const fy = -gy;
+      const grad = localPlaneGradient(x, y, samples, h2);
+      if (!grad) continue;
+      const fx = -grad[0];
+      const fy = -grad[1];
       const mag = Math.sqrt(fx * fx + fy * fy);
       if (!Number.isFinite(mag) || mag < 1e-15) continue;
       const ux = (fx / mag) * arrowLen;

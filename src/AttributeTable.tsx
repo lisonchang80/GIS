@@ -10,8 +10,10 @@ import type {
   SoilLandUse,
   SoilSurveyTab,
   VectorLayer,
+  WaterLevelArrows,
   WaterLevelCustomBand,
   WaterLevelFill,
+  WaterLevelHeightLabel,
   WaterLevelLines,
 } from './types';
 import { SOIL_BATCH_KEY } from './types';
@@ -35,6 +37,39 @@ import {
   readSoilConc,
 } from './exceedance';
 import { fileToGeoJSON, ensureNames } from './importers';
+
+// 地下水位「等水位線／流向」圖層生成時套用的預設樣式（只影響水位等高線，不動 gw-conc／soil）。
+const WATER_LEVEL_BASE_STYLE = {
+  opacity: 0.8,
+  color: '#3b82f6',
+  strokeColor: '#3b82f6',
+  strokeWidth: 4.5,
+  labelVisible: true,
+  labelColor: '#ffffff',
+  labelHaloColor: '#000000',
+  labelSize: 16,
+} satisfies Partial<VectorLayer>;
+
+const WATER_LEVEL_STYLE_DEFAULTS: {
+  heightLabel: WaterLevelHeightLabel;
+  lines: WaterLevelLines;
+  arrows: WaterLevelArrows;
+  fill: WaterLevelFill;
+} = {
+  heightLabel: { visible: true, color: '#ffffff', haloColor: '#000000', size: 18 },
+  lines: {
+    majorInterval: 0.5,
+    minorEnabled: true,
+    minorDivisions: 4,
+    outlineEnabled: false,
+    dashStyle: 'solid',
+    minorDashStyle: 'dot',
+    minorColor: '#ffffff',
+    minorWidthRatio: 0.9,
+  },
+  arrows: { enabled: true, divisions: 8, color: '#1d4ed8', width: 2 },
+  fill: { mode: 'gradient', gradient: { from: '#cce6ff', to: '#003366' }, opacity: 0.65 },
+};
 
 function makeGwConcDefaults(sub: GwConcSubstance): {
   fill: WaterLevelFill | undefined;
@@ -902,13 +937,7 @@ export function AttributeTable({
       id: `wlc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       name: date,
       visible: true,
-      opacity: 0.85,
-      color: '#3b82f6',
-      strokeColor: '#3b82f6',
-      strokeWidth: 1.5,
-      labelVisible: true,
-      labelColor: '#ffffff',
-      labelSize: 11,
+      ...WATER_LEVEL_BASE_STYLE,
       kind: 'line',
       data: { type: 'FeatureCollection', features } as FeatureCollection,
       featureCount: features.length,
@@ -917,6 +946,7 @@ export function AttributeTable({
         activeDate: date,
         sourceLayerId: layer.id,
         model: contourModel,
+        ...WATER_LEVEL_STYLE_DEFAULTS,
       },
     };
     onAddLayer(newLayer);
@@ -946,13 +976,7 @@ export function AttributeTable({
       id: `wlc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       name: latest,
       visible: true,
-      opacity: 0.85,
-      color: '#3b82f6',
-      strokeColor: '#3b82f6',
-      strokeWidth: 1.5,
-      labelVisible: true,
-      labelColor: '#ffffff',
-      labelSize: 11,
+      ...WATER_LEVEL_BASE_STYLE,
       kind: 'line',
       data: { type: 'FeatureCollection', features: allFeatures } as FeatureCollection,
       featureCount: allFeatures.length,
@@ -961,6 +985,7 @@ export function AttributeTable({
         activeDate: latest,
         sourceLayerId: layer.id,
         model: contourModel,
+        ...WATER_LEVEL_STYLE_DEFAULTS,
       },
     };
     onAddLayer(newLayer);

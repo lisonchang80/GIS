@@ -36,6 +36,7 @@ description: >
 `src/landQuery.ts` 打 `https://twland.ronny.tw/index/search?lands[]=縣市,段名,地號`（逗號分隔，需 urlencode），回 GeoJSON。seed 內直接抓官方列出的地號當 `kind:'polygon'` 的場址圖層 feature（同段多筆連號通常相鄰）。
 - **先去權威官方來源拿「地段名 + 地號清單」，別自己猜地段。** 真實污染場址多有政府公告頁（例：臺南市環保局土壤及地下水污染整治場址資訊 `epb2.tnepb.gov.tw/cpdc/.../mode02.asp?m=…`），裡面直接列出地段與每筆地號（廠區/熱點/已解除管制常分群）。先 WebFetch 該頁抓地號，再丟 twland API 驗證解析、算中心/面積定位。
 - 慘痛教訓：安順那次**沒查官方公告就自己挑了「顯宮段」**去畫，整個偏 2.6km；官方實為**安南區鹽田段**（廠區 668 系列/669、海水貯水池 659 等、東側 544-2 等共 35 筆）。先抓官方地號才一次到位。維基/搜尋座標未必錯，但**地段名一定要照官方**。
+- **非地籍/工業場址（油庫、廠區）找不到逐筆地號時 → 用 OSM 實際 footprint**：地號 API 反查農地段只會撈到周邊小地號、撈不到整塊工業地。改用 Overpass 抓該設施 polygon（`nwr[~"name"~"中油|油庫"](bbox);out center tags;` 找 way id → `way(id);out geom;` 取 ring），驗證名稱/地址後當場址範圍，README 揭露「以實際 footprint 定界、整治場址逐筆地號未公開」。湖西油庫即用 OSM way 508438551（~6.7ha）。⚠️ Overpass POST 用 urllib 會 406 → 直接把 ring 座標內嵌進 seed（別 runtime fetch，較穩）。座標→地號無公開 API，要定位設施就用 OSM/Nominatim 拿經緯度。
 
 ## 在 UI 驅動「生成」（preview_eval）
 - 開圖層屬性表：點該 `.layer-item` 內 textContent==='▤' 的 `.icon-btn`。
@@ -48,6 +49,7 @@ description: >
 ## demo 數據設計坑（會被使用者逐格檢查，見 [[feedback-simulated-data-realism]]）
 - **垂向 3D 的峰值別放太高**：等濃度線/逐層面積用 `turf.isobands`，當某層污染**整片超過閾值**（如 IDW 峰 9950、閾值 20）時 isobands 退化 → 面積亂跳/反相/體積錯。對策：把垂向場做成**內部封閉羽流**（峰值中等 ~90、四周有明顯背景<閾值的點界定範圍），逐層超標面積才單調收斂。表層抓樣（超標圖，純點不內插）才可放真實最高值。〔此為現行 iso3d 計算限制，非資料錯〕
 - 各內插層、各深度層都要 **≥3 個有效點** 才生得出等值線。
+- **2D 等濃度線：物質「峰值/監測標準」比別爆大**（湖西 MTBE 120 / 標準 1 = 120× → logTransform 在細網格畫出 2382 條 iso 線、單一物質就讓檔案 7MB）。比值控在 ~數十倍內等濃度線才乾淨（TPH 33/10≈3× 只生 33 條）。對策：內插場用**適中代表峰值**（真實高值寫進 README/屬性說明），或把該物質**移出等濃度線層**（tidy 時濾掉 `__substance` 並從 `waterLevel.substances` 拿掉，留在井屬性表＋超標圖）。導出後**檢查檔案大小**（正常 demo ~1-1.5MB，破 5MB 就是某物質爆 iso）。
 - 跨視圖一致（[[feedback-cross-view-consistency]]）：同一份資料 2D/3D 著色要一致；所有模型/選項都要真生效。
 
 ## 整理（GET → tidy → 寫檔）

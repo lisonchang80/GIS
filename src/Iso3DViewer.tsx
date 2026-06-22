@@ -36,6 +36,7 @@ async function renderThree(
   vol: SurveyVolume,
   zExag: number,
   layout: SliceLayout,
+  showPoints: boolean,
 ): Promise<() => void> {
   const THREE = await import('three');
   const { OrbitControls } = await import('three/examples/jsm/controls/OrbitControls.js');
@@ -139,30 +140,52 @@ async function renderThree(
     }
   });
 
-  // 障礙物灰柱（depthTop~depthBottom）：只在 stack 顯示（跨層、分離/攤平無對應）
-  if (layout === 'stack') {
-    for (const ob of vol.obstacles) {
-      const outer = ob.ringsM[0];
-      if (!outer || outer.length < 3) continue;
-      const shape = new THREE.Shape();
-      outer.forEach(([x, y], i) => (i === 0 ? shape.moveTo(x - cx, y - cy) : shape.lineTo(x - cx, y - cy)));
-      const tk = Math.max((ob.depthBottom - ob.depthTop) * zExag, 0.5);
-      const geo = new THREE.ExtrudeGeometry(shape, { depth: tk, bevelEnabled: false });
+  // 障礙物：在每個「深度區間與障礙物重疊」的切片上畫灰盒 + 白色邊框（堆疊→連成柱、
+  // 分離/攤平→各層各一盒），所有佈局都顯示。盒子與切片同 pose，故與該層挖空處對齊。
+  for (const ob of vol.obstacles) {
+    const outer = ob.ringsM[0];
+    if (!outer || outer.length < 3) continue;
+    const shape = new THREE.Shape();
+    outer.forEach(([x, y], i) => (i === 0 ? shape.moveTo(x - cx, y - cy) : shape.lineTo(x - cx, y - cy)));
+    let labelled = false;
+    vol.slices.forEach((s, k) => {
+      const top = parseFloat(s.topKey);
+      const bot = top + vol.interval;
+      if (!(top < ob.depthBottom - 1e-9 && bot > ob.depthTop + 1e-9)) return; // 此層與障礙物不重疊
+      const pose = slabPose(k);
+      const geo = new THREE.ExtrudeGeometry(shape, { depth: pose.tk, bevelEnabled: false });
       geos.push(geo);
-      const mat = new THREE.MeshLambertMaterial({ color: 0x9ca3af, transparent: true, opacity: 0.28, side: THREE.DoubleSide });
+      const mat = new THREE.MeshLambertMaterial({ color: 0x9ca3af, transparent: true, opacity: 0.5, side: THREE.DoubleSide });
       mats.push(mat);
       const mesh = new THREE.Mesh(geo, mat);
       mesh.rotation.x = -Math.PI / 2;
-      // 底在較深處（-depthBottom），往上擠出至 -depthTop（往地表方向）
-      mesh.position.y = -ob.depthBottom * zExag;
+      mesh.position.set(pose.offX, pose.baseY, pose.offZ);
       group.add(mesh);
-    }
+      // 白色邊框讓障礙物清楚可辨
+      const eg = new THREE.EdgesGeometry(geo);
+      geos.push(eg);
+      const emat = new THREE.LineBasicMaterial({ color: 0xe5e7eb, transparent: true, opacity: 0.8 });
+      mats.push(emat);
+      const edges = new THREE.LineSegments(eg, emat);
+      edges.rotation.x = -Math.PI / 2;
+      edges.position.set(pose.offX, pose.baseY, pose.offZ);
+      group.add(edges);
+      if (!labelled) {
+        labelled = true;
+        let mx = 0; let my = 0;
+        outer.forEach(([x, y]) => { mx += x - cx; my += y - cy; });
+        mx /= outer.length; my /= outer.length;
+        addLabel(ob.label || '障礙物', pose.offX + mx, pose.baseY + pose.tk + labelH * 0.6, pose.offZ + my, '#cbd5e1', labelH * 0.7);
+      }
+    });
   }
-  // 採樣點位標記：自地表沿真實深度直線貫穿每一層（只在堆疊真實深度視圖有意義）
-  if (layout === 'stack' && vol.points.length) {
-    const topY = thickness * 0.4;                 // 略高於地表
-    const botY = -vol.maxDepthM * zExag;
+
+  // 採樣點位標記：自地表沿深度直線貫穿每一層（堆疊＝真實深度；分離＝串起拉開的各層）。
+  if (showPoints && vol.points.length && (layout === 'stack' || layout === 'separate')) {
+    const n2 = vol.slices.length;
     const markH = span * 0.05;
+    const topY = layout === 'stack' ? thickness * 0.4 : slabPose(0).baseY + thickness;
+    const botY = layout === 'stack' ? -vol.maxDepthM * zExag : slabPose(Math.max(0, n2 - 1)).baseY;
     for (const pt of vol.points) {
       const px = pt.x - cx;
       const pz = pt.y - cy;
@@ -365,6 +388,7 @@ export function Iso3DViewer({
   const containerRef = useRef<HTMLDivElement>(null);
   const [mode, setMode] = useState<Mode>('slices');
   const [layout, setLayout] = useState<SliceLayout>('stack');
+  const [showPoints, setShowPoints] = useState(true);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
@@ -401,7 +425,7 @@ export function Iso3DViewer({
     (async () => {
       try {
         cleanup = mode === 'slices'
-          ? await renderThree(container, vol, zExag, layout)
+          ? await renderThree(container, vol, zExag, layout, showPoints)
           : await renderPlotly(container, vol, threshold, sub?.monitorConc, sub?.controlConc);
       } catch (e) {
         if (!disposed) setErr((e as Error).message || String(e));
@@ -409,7 +433,7 @@ export function Iso3DViewer({
       if (!disposed) setLoading(false);
     })();
     return () => { disposed = true; try { cleanup(); } catch { /* noop */ } };
-  }, [mode, layout, vol, threshold, sub]);
+  }, [mode, layout, showPoints, vol, threshold, sub]);
 
   const activeVolume = mode === 'slices' ? vol?.volumeStack : vol?.volumeSmooth;
   const hasEstimated = !!vol?.slices.some((s) => s.estimated);
@@ -429,6 +453,12 @@ export function Iso3DViewer({
               <button className={`btn xs${layout === 'separate' ? ' primary' : ''}`} onClick={() => setLayout('separate')} title="拉開各層間距，逐層分離檢視">切片分離</button>
               <button className={`btn xs${layout === 'flat' ? ' primary' : ''}`} onClick={() => setLayout('flat')} title="各層攤平於地面，俯視並排比較">切片平放</button>
             </div>
+          )}
+          {mode === 'slices' && (
+            <label className="iso3d-toggle" title="標示鑽探/採樣點位（堆疊與切片分離視圖）">
+              <input type="checkbox" checked={showPoints} onChange={(e) => setShowPoints(e.target.checked)} />
+              標示採樣點
+            </label>
           )}
           <button className="iso3d-close" onClick={onClose} title="關閉">×</button>
         </div>

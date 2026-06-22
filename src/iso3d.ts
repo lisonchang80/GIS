@@ -92,6 +92,7 @@ export interface ObstacleProjected {
   depthTop: number;
   depthBottom: number;
   ringsM: number[][][]; // 投影後外環（供 3D 畫灰柱）
+  label?: string;
 }
 export interface SurveyVolume {
   hasData: boolean;
@@ -228,6 +229,7 @@ export function buildSurveyVolume(p: SurveyVolumeParams): SurveyVolume {
   const obProj: ObstacleProjected[] = obstacles.map((o) => ({
     depthTop: o.depthTop, depthBottom: o.depthBottom,
     ringsM: o.geometry.coordinates.map((ring) => ring.map(([lng, lat]) => proj(lng, lat))),
+    label: o.label,
   }));
   const obFeatures = obstacles.map((o) => turf.feature(o.geometry) as Feature<Polygon>);
   const obAtDepth = (d: number) =>

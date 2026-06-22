@@ -1933,6 +1933,21 @@ body.resizing-x {
   padding-left: 10px;
   border-left: 1px solid var(--border, #2a3340);
 }
+.iso3d-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 4px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border, #2a3340);
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.iso3d-toggle input {
+  cursor: pointer;
+}
 .iso3d-close {
   margin-left: auto;
   background: transparent;

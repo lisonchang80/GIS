@@ -55,7 +55,14 @@ description: >
 ## 整理（GET → tidy → 寫檔）
 衍生圖層**自動命名**（如「SGS… 多污染物 2024-11-20」「2024-11-20」）很醜 → GET 後用 Python 改名、重排（點在上、線等值線中、多邊形底）、設預設 `visible`（首屏只開重點層）、設 `mapView`。偵測衍生層：gw-conc 等濃度線 `waterLevel.sourceKind==='gw-conc'`；等水位線 `kind==='line' && waterLevel && !sourceKind`；超標圖 `layer.exceedance`。**cp950 console 印中文會炸**（檔案已寫成功，只是 print 失敗）→ 用 `io.TextIOWrapper(sys.stdout.buffer,'utf-8')` 或別印中文。
 
+## 衍生圖層是「烘焙」的 → 改生成相關程式後要重生 demo 才生效
+demo JSON 把等水位線/等濃度線/超標圖的 features **烘死在檔案裡**（非執行期重算）。所以只要改到
+**生成階段**會影響輸出的程式（樣式預設、填色 plan、流向演算法、isobands/面積、箭頭等分…），
+舊 demo **不會**自動反映 → 必須**整批重生**：seed→隔離後端→UI 逐層點生成→`server/_<name>_export.py`
+tidy→覆寫 `examples/<name>.json`，再重匯入驗證。保留各 demo 的 export 腳本邏輯（改名/排序/可見/
+mapView/預設期）方便重跑。⚠️ 但 **3D 垂向（iso3d）是執行期算**的，survey 點資料不變就免重生，會自動吃新檢視器程式。
+
 ## 驗證 / 交付
-- 最終一定要**把產出的 JSON 當新專案重新匯入**（POST+PUT 或 App 匯入）再 reload，確認 8 層順序/預設顯示/legend/無 console error。
-- 無 code 變更 → 不必 deploy；commit `examples/`（JSON + README + seed 產生器）即可。
-- 截圖會因 maplibre/WebGL timeout → 一律讀 DOM / 後端 features 數量佐證（band 數、分級數、體積、z 範圍）。
+- 最終一定要**把產出的 JSON 當新專案重新匯入**（POST+PUT 或 App 匯入）再 reload，確認層數/順序/預設顯示/legend/無 console error。
+- 無 code 變更 → 不必 deploy；commit `examples/`（JSON + README + seed 產生器）即可。**動到 src/ 程式**（不只 demo 資料）→ commit 後要 `packaging\deploy.bat` 上線。
+- 截圖會因 maplibre/WebGL timeout → 一律讀 DOM / 後端 features 數量佐證（band 數、分級數、體積、z 範圍）；3D Three.js 物件不在 DOM → 用 TEMP-DEBUG 把 `group.children` 計數曝到 `window` 驗證（見 [[gis-isolated-preview-verify]]）。

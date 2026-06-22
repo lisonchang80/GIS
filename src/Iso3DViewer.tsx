@@ -92,8 +92,6 @@ async function renderThree(
     spr.position.set(x, y, z);
     scene.add(spr);
   };
-  const fmtVol = (a: number) => (a > 0 ? `${Math.round(a * vol.interval).toLocaleString()} m³` : '—');
-
   // 每層在各 layout 下的擺位（mesh 旋轉後 local z→world y(上)，local 平面落在 world XZ）
   const slabPose = (k: number): { tk: number; baseY: number; offX: number; offZ: number } => {
     const top = parseFloat(vol.slices[k].topKey);
@@ -133,14 +131,11 @@ async function renderThree(
         group.add(mesh);
       }
     }
-    // 分離 / 攤平：每片標深度區間 + 個別體積
+    // 分離 / 攤平：每片只標深度區間（體積改列於右下角表格，圖面不放數字）
     if (layout === 'separate') {
-      addLabel(depthRangeLabel(s.topKey, vol.interval), off, pose.baseY + pose.tk / 2 + labelH * 0.7, 0, '#cbd5e1');
-      addLabel(fmtVol(s.area), off, pose.baseY + pose.tk / 2 - labelH * 0.7, 0, '#86efac');
+      addLabel(depthRangeLabel(s.topKey, vol.interval), off, pose.baseY + pose.tk / 2, 0, '#cbd5e1');
     } else if (layout === 'flat') {
-      const fH = labelH * 1.7; // 攤平：字體大些
-      addLabel(depthRangeLabel(s.topKey, vol.interval), pose.offX, flatTk + 1, pose.offZ - cell * 0.40, '#e2e8f0', fH);
-      addLabel(fmtVol(s.area), pose.offX, flatTk + 1, pose.offZ + cell * 0.40, '#86efac', fH);
+      addLabel(depthRangeLabel(s.topKey, vol.interval), pose.offX, flatTk + 1, pose.offZ, '#e2e8f0', labelH * 1.7);
     }
   });
 
@@ -161,6 +156,34 @@ async function renderThree(
       // 底在較深處（-depthBottom），往上擠出至 -depthTop（往地表方向）
       mesh.position.y = -ob.depthBottom * zExag;
       group.add(mesh);
+    }
+  }
+  // 採樣點位標記：自地表沿真實深度直線貫穿每一層（只在堆疊真實深度視圖有意義）
+  if (layout === 'stack' && vol.points.length) {
+    const topY = thickness * 0.4;                 // 略高於地表
+    const botY = -vol.maxDepthM * zExag;
+    const markH = span * 0.05;
+    for (const pt of vol.points) {
+      const px = pt.x - cx;
+      const pz = pt.y - cy;
+      const lgeo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(px, topY, pz),
+        new THREE.Vector3(px, botY, pz),
+      ]);
+      geos.push(lgeo);
+      const lmat = new THREE.LineBasicMaterial({ color: 0xf1f5f9, transparent: true, opacity: 0.85, depthTest: false });
+      mats.push(lmat);
+      group.add(new THREE.Line(lgeo, lmat));
+      // 地表倒錐標記（永遠可見）
+      const cone = new THREE.ConeGeometry(markH * 0.5, markH, 10);
+      geos.push(cone);
+      const cmat = new THREE.MeshBasicMaterial({ color: 0xf8fafc, depthTest: false });
+      mats.push(cmat);
+      const m = new THREE.Mesh(cone, cmat);
+      m.position.set(px, topY + markH * 0.6, pz);
+      m.rotation.x = Math.PI;                      // 尖端朝下指向地表
+      group.add(m);
+      if (pt.name) addLabel(pt.name, px, topY + markH * 2.0, pz, '#e2e8f0', labelH * 0.75);
     }
   }
   scene.add(group);
@@ -434,6 +457,26 @@ export function Iso3DViewer({
                   {mode === 'slices' ? '堆疊體積' : '平滑體積'} ≈ {activeVolume && activeVolume > 0 ? `${Math.round(activeVolume).toLocaleString()} m³` : '—'}
                 </span>
               </div>
+              {mode === 'slices' && vol.slices.length > 0 && (
+                <div className="iso3d-voltable">
+                  <div className="iso3d-voltable-title">各深度污染體積 (m³)</div>
+                  <table>
+                    <tbody>
+                      {vol.slices.map((s) => (
+                        <tr key={s.topKey} className={s.estimated ? 'est' : undefined}>
+                          <td>{depthRangeLabel(s.topKey, vol.interval)}{s.estimated ? '*' : ''}</td>
+                          <td className="v">{s.area > 0 ? Math.round(s.area * vol.interval).toLocaleString() : '—'}</td>
+                        </tr>
+                      ))}
+                      <tr className="total">
+                        <td>合計</td>
+                        <td className="v">{vol.volumeStack > 0 ? Math.round(vol.volumeStack).toLocaleString() : '—'}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  {hasEstimated && <div className="iso3d-voltable-note">* 缺層垂向推估</div>}
+                </div>
+              )}
             </>
           )}
         </div>

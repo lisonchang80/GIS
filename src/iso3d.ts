@@ -107,6 +107,7 @@ export interface SurveyVolume {
   unit: string;
   legend: { color: string; label: string }[];
   obstacles: ObstacleProjected[];
+  points: { x: number; y: number; name: string }[]; // 鑽孔/採樣點位（本地公尺，與 xM/yM 同系）
 }
 
 export interface SurveyVolumeParams {
@@ -172,7 +173,7 @@ export function buildSurveyVolume(p: SurveyVolumeParams): SurveyVolume {
   const empty: SurveyVolume = {
     hasData: false, slices: [], field: null, volumeStack: 0, volumeSmooth: 0,
     horizSpanM: 0, maxDepthM: 0, interval, valueMax: 0,
-    substanceName: p.substanceName, unit: p.unit, legend: [], obstacles: [],
+    substanceName: p.substanceName, unit: p.unit, legend: [], obstacles: [], points: [],
   };
   if (allSamples.length === 0 || perDepth.every((d) => d.samples.length < 3)) return empty;
 
@@ -180,6 +181,18 @@ export function buildSurveyVolume(p: SurveyVolumeParams): SurveyVolume {
   const lat0 = allSamples.reduce((a, s) => a + s.y, 0) / allSamples.length;
   const kx = lonMetersPerDeg(lat0);
   const proj = (lng: number, lat: number): [number, number] => [(lng - lng0) * kx, (lat - lat0) * LAT_M];
+
+  // 鑽孔/採樣點位（每個有此分頁濃度的點要素一筆）→ 投影成本地公尺，供 3D 畫地表貫穿線標記。
+  const points: { x: number; y: number; name: string }[] = [];
+  for (const f of layer.data.features) {
+    if (f.geometry?.type !== 'Point') continue;
+    const props = (f.properties ?? {}) as Record<string, unknown>;
+    const sv = (props['__soilSurvey'] as Record<string, Record<string, Record<string, unknown>>> | undefined)?.[tabId]?.[subId];
+    if (!sv || !Object.values(sv).some((v) => typeof v === 'number' && Number.isFinite(v))) continue;
+    const [lng, lat] = f.geometry.coordinates as [number, number];
+    const [px, py] = proj(lng, lat);
+    points.push({ x: px, y: py, name: typeof props['名稱'] === 'string' ? (props['名稱'] as string) : '' });
+  }
 
   let valueMax = 0;
   for (const s of allSamples) { const z = Math.max(0, s.z); if (z > valueMax) valueMax = z; }
@@ -379,6 +392,6 @@ export function buildSurveyVolume(p: SurveyVolumeParams): SurveyVolume {
   return {
     hasData: true, slices, field, volumeStack, volumeSmooth,
     horizSpanM, maxDepthM, interval, valueMax,
-    substanceName: p.substanceName, unit: p.unit, legend, obstacles: obProj,
+    substanceName: p.substanceName, unit: p.unit, legend, obstacles: obProj, points,
   };
 }

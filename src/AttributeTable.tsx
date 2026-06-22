@@ -67,7 +67,7 @@ const WATER_LEVEL_STYLE_DEFAULTS: {
     minorColor: '#ffffff',
     minorWidthRatio: 0.9,
   },
-  arrows: { enabled: true, divisions: 8, color: '#1d4ed8', width: 2 },
+  arrows: { enabled: true, divisions: 5, color: '#1d4ed8', width: 2 },
   fill: { mode: 'gradient', gradient: { from: '#cce6ff', to: '#003366' }, opacity: 0.65 },
 };
 

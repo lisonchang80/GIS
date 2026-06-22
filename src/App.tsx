@@ -443,7 +443,15 @@ export default function App() {
   );
 
   const addLayer = useCallback((layer: VectorLayer) => {
-    setLayers((prev) => [layer, ...prev]);
+    setLayers((prev) => {
+      const next = [layer, ...prev];
+      // 新增的等值線/等水位線圖層：立即依其 waterLevel 設定重建一次。否則生成當下
+      // 不會帶填色 plan（漸層/自訂範圍 bands），要等使用者改一次樣式才出現。
+      if (layer.waterLevel?.sourceLayerId) {
+        return syncSingleContour(next, layer.id);
+      }
+      return next;
+    });
   }, []);
 
   const removeLayer = useCallback((id: string) => {

@@ -299,9 +299,42 @@ export function StylePopover({ layer, sourceLayer, onClose, onUpdate }: Props) {
     updateFill({ bands: bands.filter((_, i) => i !== idx) });
   };
 
+  // 樣式視窗可拖曳（抓標題列）。pos=null 時用 CSS 預設位置。
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const dragRef = useRef<{ dx: number; dy: number } | null>(null);
+  const onHeaderPointerDown = (e: React.PointerEvent) => {
+    if ((e.target as HTMLElement).closest('button')) return; // 別攔截關閉鈕
+    const rect = rootRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    dragRef.current = { dx: e.clientX - rect.left, dy: e.clientY - rect.top };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  };
+  const onHeaderPointerMove = (e: React.PointerEvent) => {
+    if (!dragRef.current) return;
+    const w = rootRef.current?.offsetWidth ?? 320;
+    const left = Math.max(8, Math.min(window.innerWidth - w - 8, e.clientX - dragRef.current.dx));
+    const top = Math.max(8, Math.min(window.innerHeight - 44, e.clientY - dragRef.current.dy));
+    setPos({ left, top });
+  };
+  const endHeaderDrag = (e: React.PointerEvent) => {
+    dragRef.current = null;
+    try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* noop */ }
+  };
+
   return (
-    <div className="style-popover">
-        <div className="popover-header">
+    <div
+      className="style-popover"
+      ref={rootRef}
+      style={pos ? { left: pos.left, top: pos.top, right: 'auto' } : undefined}
+    >
+        <div
+          className="popover-header is-draggable"
+          onPointerDown={onHeaderPointerDown}
+          onPointerMove={onHeaderPointerMove}
+          onPointerUp={endHeaderDrag}
+          onPointerCancel={endHeaderDrag}
+        >
           <span className="popover-title">樣式 · {layer.name}</span>
           <button className="icon-btn" onClick={onClose}>×</button>
         </div>

@@ -271,6 +271,12 @@ body.resizing-x {
   border-bottom: 1px solid var(--border);
 }
 
+.popover-header.is-draggable {
+  cursor: move;
+  touch-action: none;
+  user-select: none;
+}
+
 .popover-title {
   font-weight: 600;
   font-size: 13px;

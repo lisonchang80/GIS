@@ -17,6 +17,7 @@ interface Props {
   onZoom: () => void;
   onShowAttributes: () => void;
   onToggleStyle: () => void;
+  onOpen3D?: () => void;
   attributesActive: boolean;
   styleActive: boolean;
   onDragStart: () => void;
@@ -41,6 +42,10 @@ export function LayerItem(p: Props) {
 
   const isMultiSub = !!wl?.substances && wl.substances.length > 0;
   const isSoilSurvey = wl?.sourceKind === 'soil-survey';
+  // 土壤污染調查等濃度線圖層可直接開 3D：來源土壤調查圖層 + 分頁需仍存在。
+  const soilSurveySource =
+    isSoilSurvey && wl?.sourceLayerId ? p.allLayers.find((l) => l.id === wl.sourceLayerId) : undefined;
+  const canOpen3D = !!soilSurveySource?.soilSurveyTabs?.some((t) => t.id === wl?.sourceTabId);
   const soilDepthRange = (key: string): string => {
     const top = parseFloat(key);
     const iv = wl?.depthInterval ?? (wl && wl.dates.length > 1 ? parseFloat(wl.dates[1]) - parseFloat(wl.dates[0]) : 0.5);
@@ -203,6 +208,14 @@ export function LayerItem(p: Props) {
             title="開啟 / 關閉屬性表"
             onClick={p.onShowAttributes}
           >▤</button>
+        )}
+        {isSoilSurvey && (
+          <button
+            className="icon-btn"
+            title={canOpen3D ? '開啟 3D 體積（堆疊切片 / 平滑曲面）' : '找不到來源土壤污染調查圖層'}
+            disabled={!canOpen3D || !p.onOpen3D}
+            onClick={p.onOpen3D}
+          >3D</button>
         )}
         <button className="icon-btn" title="縮放至圖層" onClick={p.onZoom}>⤢</button>
         <button className="icon-btn danger" title="移除" onClick={p.onRemove}>×</button>

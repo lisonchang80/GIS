@@ -924,6 +924,12 @@ export default function App() {
         onReorderLayer={reorderLayer}
         onShowAttributes={toggleAttributes}
         onToggleStyle={toggleStylePopover}
+        onOpen3D={(layerId) => {
+          const wl = layers.find((l) => l.id === layerId)?.waterLevel;
+          if (wl?.sourceKind === 'soil-survey' && wl.sourceLayerId && wl.sourceTabId && wl.sourceSubId) {
+            setIso3DTarget({ layerId: wl.sourceLayerId, tabId: wl.sourceTabId, subId: wl.sourceSubId });
+          }
+        }}
         activeAttributesLayerId={attributesLayerId}
         activeStyleLayerId={stylePopoverLayerId}
         onFiles={handleFiles}

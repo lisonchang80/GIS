@@ -23,6 +23,7 @@ interface Props {
   onReorderLayer: (draggedId: string, targetId: string, position: 'above' | 'below') => void;
   onShowAttributes: (id: string) => void;
   onToggleStyle: (id: string) => void;
+  onOpen3D: (id: string) => void;
   activeAttributesLayerId: string | null;
   activeStyleLayerId: string | null;
   onFiles: (files: FileList) => void;
@@ -197,6 +198,7 @@ export function LayerPanel(p: Props) {
               onZoom={() => p.onZoomLayer(layer.id)}
               onShowAttributes={() => p.onShowAttributes(layer.id)}
               onToggleStyle={() => p.onToggleStyle(layer.id)}
+              onOpen3D={() => p.onOpen3D(layer.id)}
               attributesActive={p.activeAttributesLayerId === layer.id}
               styleActive={p.activeStyleLayerId === layer.id}
               onDragStart={() => setDraggingId(layer.id)}

@@ -34,14 +34,14 @@ The `gis.tinghaochang.com` rule has already been added above the catch-all 404.
 Create the DNS record once (this touches your Cloudflare DNS):
 
 ```
-cloudflared tunnel route dns clinscope gis.tinghaochang.com
+cloudflared tunnel route dns tinghaochang-sites gis.tinghaochang.com
 ```
 
 Then restart the shared tunnel so it picks up the new ingress (briefly drops
 ClinScope):
 
 ```
-cloudflared tunnel run clinscope
+cloudflared tunnel run tinghaochang-sites
 ```
 
 ## Each deploy

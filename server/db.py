@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS users (
   name        TEXT,
   picture     TEXT,
   created_at  TEXT NOT NULL,
-  last_login  TEXT
+  last_login  TEXT,
+  seeded_demo INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS projects (
@@ -73,6 +74,11 @@ def init_db() -> None:
     conn = get_conn()
     try:
         conn.executescript(SCHEMA)
+        # Migration：既有 DB（在加入預設範本功能之前建立）補上 seeded_demo 欄位，
+        # 讓舊使用者下次登入也能補發一次預設範本。
+        cols = [r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
+        if "seeded_demo" not in cols:
+            conn.execute("ALTER TABLE users ADD COLUMN seeded_demo INTEGER NOT NULL DEFAULT 0")
         conn.commit()
     finally:
         conn.close()
@@ -83,10 +89,11 @@ def upsert_user(google_sub: str, email: str, name, picture) -> int:
     try:
         ts = now_iso()
         row = conn.execute(
-            "SELECT id FROM users WHERE google_sub = ?", (google_sub,)
+            "SELECT id, seeded_demo FROM users WHERE google_sub = ?", (google_sub,)
         ).fetchone()
         if row:
             uid = row["id"]
+            already_seeded = bool(row["seeded_demo"])
             conn.execute(
                 "UPDATE users SET email=?, name=?, picture=?, last_login=? WHERE id=?",
                 (email, name, picture, ts, uid),
@@ -98,7 +105,10 @@ def upsert_user(google_sub: str, email: str, name, picture) -> int:
                 (google_sub, email, name, picture, ts, ts),
             )
             uid = cur.lastrowid
-            # 新使用者：一次性灌入預設範本專案（存原始 JSON 文字，GET 時解析）。
+            already_seeded = False
+        # 每位使用者一次性灌入預設範本專案（含尚未種過的既有舊使用者，靠 seeded_demo 旗標）。
+        # 找不到種子檔則保持旗標為 0，日後補上檔案再重啟仍會補發。
+        if not already_seeded:
             seed_raw, seed_meta = _load_seed()
             if seed_raw:
                 conn.execute(
@@ -106,6 +116,7 @@ def upsert_user(google_sub: str, email: str, name, picture) -> int:
                     " VALUES (?, ?, ?, ?, ?, ?)",
                     (uid, seed_meta["name"], seed_meta["version"], seed_raw, ts, ts),
                 )
+                conn.execute("UPDATE users SET seeded_demo=1 WHERE id=?", (uid,))
         conn.commit()
         return uid
     finally:

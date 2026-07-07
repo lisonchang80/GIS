@@ -4,11 +4,35 @@ Single-file embedded DB (no server / no admin needed). The project blob is the
 exact ProjectState JSON the frontend already serializes; we do not decompose
 layers into rows (PostGIS decomposition is a future upgrade).
 """
+import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
 DB_PATH = Path(__file__).parent / "gis.db"
+
+# 每位新使用者首次登入時自動獲得的預設範本專案（來源：Demo/ 匯出檔）。
+SEED_PATH = Path(__file__).parent / "seed_demo.json"
+_seed_raw: str | None = None
+_seed_meta: dict | None = None
+
+
+def _load_seed():
+    """回傳 (raw_json_text, {name, version})；找不到或壞掉則回傳 ('', {})，靜默略過種子。"""
+    global _seed_raw, _seed_meta
+    if _seed_raw is None:
+        try:
+            raw = SEED_PATH.read_text(encoding="utf-8")
+            meta = json.loads(raw)
+            _seed_raw = raw
+            _seed_meta = {
+                "name": meta.get("projectName") or "範例專案",
+                "version": int(meta.get("version", 1)),
+            }
+        except (OSError, ValueError):
+            _seed_raw = ""
+            _seed_meta = {}
+    return _seed_raw, _seed_meta
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -74,6 +98,14 @@ def upsert_user(google_sub: str, email: str, name, picture) -> int:
                 (google_sub, email, name, picture, ts, ts),
             )
             uid = cur.lastrowid
+            # 新使用者：一次性灌入預設範本專案（存原始 JSON 文字，GET 時解析）。
+            seed_raw, seed_meta = _load_seed()
+            if seed_raw:
+                conn.execute(
+                    "INSERT INTO projects (user_id, name, version, data, created_at, updated_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    (uid, seed_meta["name"], seed_meta["version"], seed_raw, ts, ts),
+                )
         conn.commit()
         return uid
     finally:

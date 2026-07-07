@@ -36,3 +36,6 @@ packaging/env.local.bat
 *.njsproj
 *.sln
 *.sw?
+
+# 本機預設範本來源匯出檔（實際使用的種子在 server/seed_demo.json）
+/Demo/

@@ -77,7 +77,7 @@ export function ProjectBar(p: Props) {
       collapsed={collapsed}
       onToggle={() => setCollapsed((c) => !c)}
     >
-      <div className="project-bar" ref={wrapRef}>
+      <div className="project-bar" data-tour="project-bar" ref={wrapRef}>
         <button
           className={`project-pick-btn${popup === 'select' ? ' is-open' : ''}`}
           onClick={toggleSelect}

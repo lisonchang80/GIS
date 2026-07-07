@@ -6,6 +6,7 @@ import { MapView } from './MapView';
 import { LayerPanel } from './LayerPanel';
 import { DrawToolbar, type DrawMode } from './DrawToolbar';
 import { ProjectBar } from './ProjectBar';
+import { startGisTour } from './webtour';
 import { AttributeTable } from './AttributeTable';
 import { StylePopover } from './StylePopover';
 import { Iso3DViewer } from './Iso3DViewer';
@@ -95,6 +96,12 @@ export default function App() {
   const [obstacleCapture, setObstacleCapture] = useState<{ layerId: string; tabId: string; shape: 'polygon' | 'rectangle' | 'circle' } | null>(null);
   const [measureMode, setMeasureMode] = useState<MeasureMode | null>(null);
   const [measureResult, setMeasureResult] = useState<MeasureResult | null>(null);
+
+  // 首次登入後（App 只在 LoginGate authed 時才 mount）自動播一次功能導覽；右下 ? 可重播。
+  // 等 initialized 才啟動，確保專案列 / 圖層清單 / 地圖等 DOM 都已 render。
+  useEffect(() => {
+    if (initialized) startGisTour();
+  }, [initialized]);
 
   const toggleAttributes = useCallback((id: string) => {
     setAttributesLayerId((prev) => (prev === id ? null : id));

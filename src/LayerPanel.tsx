@@ -308,6 +308,7 @@ export function LayerPanel(p: Props) {
           </button>
           <button
             className="btn xs primary"
+            data-tour="import-layer"
             onClick={() => fileRef.current?.click()}
             title="支援 GeoJSON / KML / GPX / Shapefile (.zip)"
           >
@@ -330,7 +331,7 @@ export function LayerPanel(p: Props) {
         {p.layers.length === 0 && p.layerGroups.length === 0 && (
           <p className="empty">尚無圖層，請匯入檔案</p>
         )}
-        <ul className="layer-list">
+        <ul className="layer-list" data-tour="layer-list">
           {emptyGroups.map((g) => renderGroup(g, []))}
           {rows.map((row) =>
             row.kind === 'group'

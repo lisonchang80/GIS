@@ -1,6 +1,7 @@
 import { useRef, useState, type ReactNode } from 'react';
-import type { BaseMapId, BaseMapOption, VectorLayer } from './types';
+import type { BaseMapId, BaseMapOption, LayerGroup, VectorLayer } from './types';
 import { LayerItem } from './LayerItem';
+import { LayerGroupHeader } from './LayerGroupHeader';
 import { CollapsibleSection } from './CollapsibleSection';
 import { useAuth } from './authContext';
 
@@ -17,10 +18,17 @@ interface Props {
   onPanReset: () => void;
   projectName: string;
   layers: VectorLayer[];
+  layerGroups: LayerGroup[];
   onUpdateLayer: (id: string, patch: Partial<VectorLayer>) => void;
   onRemoveLayer: (id: string) => void;
   onZoomLayer: (id: string) => void;
   onReorderLayer: (draggedId: string, targetId: string, position: 'above' | 'below') => void;
+  onCreateGroup: () => void;
+  onRenameGroup: (groupId: string, name: string) => void;
+  onToggleGroupCollapse: (groupId: string) => void;
+  onToggleGroupVisibility: (groupId: string) => void;
+  onRemoveGroup: (groupId: string) => void;
+  onAssignToGroup: (layerId: string, groupId: string | null) => void;
   onShowAttributes: (id: string) => void;
   onToggleStyle: (id: string) => void;
   onOpen3D: (id: string) => void;
@@ -38,6 +46,7 @@ export function LayerPanel(p: Props) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
   const [overPosition, setOverPosition] = useState<'above' | 'below' | null>(null);
+  const [overGroupId, setOverGroupId] = useState<string | null>(null);
   const [basemapCollapsed, setBasemapCollapsed] = useState(true);
 
   const activeBase = p.basemaps.find((b) => b.id === p.activeBasemap);
@@ -50,6 +59,137 @@ export function LayerPanel(p: Props) {
   const defaultIdx = hasVersions ? activeBase?.defaultVersionIndex ?? versions.length - 1 : 0;
 
   const PAN_PX = 120;
+
+  const renderLayerItem = (layer: VectorLayer, i: number, grouped: boolean) => (
+    <LayerItem
+      key={layer.id}
+      layer={layer}
+      allLayers={p.layers}
+      index={i}
+      total={p.layers.length}
+      grouped={grouped}
+      onRemoveFromGroup={grouped ? () => p.onAssignToGroup(layer.id, null) : undefined}
+      dragOver={overId === layer.id && draggingId !== layer.id ? overPosition : null}
+      onToggle={() => p.onUpdateLayer(layer.id, { visible: !layer.visible })}
+      onOpacity={(v) => p.onUpdateLayer(layer.id, { opacity: v })}
+      onUpdate={(patch) => p.onUpdateLayer(layer.id, patch)}
+      onRename={(name) => p.onUpdateLayer(layer.id, { name })}
+      onRemove={() => p.onRemoveLayer(layer.id)}
+      onZoom={() => p.onZoomLayer(layer.id)}
+      onShowAttributes={() => p.onShowAttributes(layer.id)}
+      onToggleStyle={() => p.onToggleStyle(layer.id)}
+      onOpen3D={() => p.onOpen3D(layer.id)}
+      attributesActive={p.activeAttributesLayerId === layer.id}
+      styleActive={p.activeStyleLayerId === layer.id}
+      onDragStart={() => setDraggingId(layer.id)}
+      onDragEnd={() => {
+        setDraggingId(null);
+        setOverId(null);
+        setOverPosition(null);
+        setOverGroupId(null);
+      }}
+      onDragOverRow={(position) => {
+        if (draggingId !== layer.id) {
+          setOverId(layer.id);
+          setOverPosition(position);
+          setOverGroupId(null);
+        }
+      }}
+      onDragLeaveRow={() => {
+        if (overId === layer.id) {
+          setOverId(null);
+          setOverPosition(null);
+        }
+      }}
+      onDropRow={() => {
+        if (draggingId && draggingId !== layer.id && overPosition) {
+          p.onReorderLayer(draggingId, layer.id, overPosition);
+        }
+        setDraggingId(null);
+        setOverId(null);
+        setOverPosition(null);
+        setOverGroupId(null);
+      }}
+    />
+  );
+
+  // 群組標題的拖入處理：把被拖曳的圖層指派進該群組
+  const groupDropHandlers = (groupId: string) => ({
+    onDragOver: (e: React.DragEvent<HTMLDivElement>) => {
+      if (!draggingId) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      setOverGroupId(groupId);
+      setOverId(null);
+      setOverPosition(null);
+    },
+    onDragLeave: () => setOverGroupId((g) => (g === groupId ? null : g)),
+    onDrop: (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      if (draggingId) p.onAssignToGroup(draggingId, groupId);
+      setDraggingId(null);
+      setOverGroupId(null);
+    },
+  });
+
+  // 組出顯示列：空群組列在最上方（作為拖曳目標），其餘依圖層陣列順序，
+  // 同群組的連續區塊收攏在一個群組標題底下。
+  const groupsById = new Map(p.layerGroups.map((g) => [g.id, g] as const));
+  const usedGroupIds = new Set(p.layers.map((l) => l.groupId).filter(Boolean) as string[]);
+  const emptyGroups = p.layerGroups.filter((g) => !usedGroupIds.has(g.id));
+
+  type Row =
+    | { kind: 'layer'; layer: VectorLayer; index: number }
+    | { kind: 'group'; group: LayerGroup; members: { layer: VectorLayer; index: number }[] };
+  const rows: Row[] = [];
+  let i = 0;
+  while (i < p.layers.length) {
+    const layer = p.layers[i];
+    const group = layer.groupId ? groupsById.get(layer.groupId) : undefined;
+    if (group) {
+      const members: { layer: VectorLayer; index: number }[] = [];
+      let j = i;
+      while (j < p.layers.length && p.layers[j].groupId === group.id) {
+        members.push({ layer: p.layers[j], index: j });
+        j++;
+      }
+      rows.push({ kind: 'group', group, members });
+      i = j;
+    } else {
+      rows.push({ kind: 'layer', layer, index: i });
+      i++;
+    }
+  }
+
+  const renderGroup = (group: LayerGroup, members: { layer: VectorLayer; index: number }[]) => {
+    const allVisible = members.length > 0 && members.every((m) => m.layer.visible);
+    const anyVisible = members.some((m) => m.layer.visible);
+    return (
+      <li key={group.id} className="layer-group">
+        <LayerGroupHeader
+          group={group}
+          memberCount={members.length}
+          allVisible={allVisible}
+          anyVisible={anyVisible}
+          isDropTarget={overGroupId === group.id}
+          onToggleVisibility={() => p.onToggleGroupVisibility(group.id)}
+          onToggleCollapse={() => p.onToggleGroupCollapse(group.id)}
+          onRename={(name) => p.onRenameGroup(group.id, name)}
+          onRemove={() => p.onRemoveGroup(group.id)}
+          {...groupDropHandlers(group.id)}
+        />
+        {!group.collapsed && (
+          <ul className="layer-group-body">
+            {members.length === 0 ? (
+              <li className="layer-group-empty">拖曳圖層到此加入群組</li>
+            ) : (
+              members.map((m) => renderLayerItem(m.layer, m.index, true))
+            )}
+          </ul>
+        )}
+      </li>
+    );
+  };
 
   return (
     <aside className="panel" style={{ width: p.width, minWidth: p.width, flex: '0 0 auto' }}>
@@ -160,6 +300,13 @@ export function LayerPanel(p: Props) {
             {p.layers.length > 1 && <span className="hint-inline">拖曳排序</span>}
           </span>
           <button
+            className="btn xs"
+            onClick={p.onCreateGroup}
+            title="新增圖層群組，可將圖層拖曳進去統一控制顯示"
+          >
+            新增群組
+          </button>
+          <button
             className="btn xs primary"
             onClick={() => fileRef.current?.click()}
             title="支援 GeoJSON / KML / GPX / Shapefile (.zip)"
@@ -180,55 +327,16 @@ export function LayerPanel(p: Props) {
             }}
           />
         </div>
-        {p.layers.length === 0 && <p className="empty">尚無圖層，請匯入檔案</p>}
+        {p.layers.length === 0 && p.layerGroups.length === 0 && (
+          <p className="empty">尚無圖層，請匯入檔案</p>
+        )}
         <ul className="layer-list">
-          {p.layers.map((layer, i) => (
-            <LayerItem
-              key={layer.id}
-              layer={layer}
-              allLayers={p.layers}
-              index={i}
-              total={p.layers.length}
-              dragOver={overId === layer.id && draggingId !== layer.id ? overPosition : null}
-              onToggle={() => p.onUpdateLayer(layer.id, { visible: !layer.visible })}
-              onOpacity={(v) => p.onUpdateLayer(layer.id, { opacity: v })}
-              onUpdate={(patch) => p.onUpdateLayer(layer.id, patch)}
-              onRename={(name) => p.onUpdateLayer(layer.id, { name })}
-              onRemove={() => p.onRemoveLayer(layer.id)}
-              onZoom={() => p.onZoomLayer(layer.id)}
-              onShowAttributes={() => p.onShowAttributes(layer.id)}
-              onToggleStyle={() => p.onToggleStyle(layer.id)}
-              onOpen3D={() => p.onOpen3D(layer.id)}
-              attributesActive={p.activeAttributesLayerId === layer.id}
-              styleActive={p.activeStyleLayerId === layer.id}
-              onDragStart={() => setDraggingId(layer.id)}
-              onDragEnd={() => {
-                setDraggingId(null);
-                setOverId(null);
-                setOverPosition(null);
-              }}
-              onDragOverRow={(position) => {
-                if (draggingId !== layer.id) {
-                  setOverId(layer.id);
-                  setOverPosition(position);
-                }
-              }}
-              onDragLeaveRow={() => {
-                if (overId === layer.id) {
-                  setOverId(null);
-                  setOverPosition(null);
-                }
-              }}
-              onDropRow={() => {
-                if (draggingId && draggingId !== layer.id && overPosition) {
-                  p.onReorderLayer(draggingId, layer.id, overPosition);
-                }
-                setDraggingId(null);
-                setOverId(null);
-                setOverPosition(null);
-              }}
-            />
-          ))}
+          {emptyGroups.map((g) => renderGroup(g, []))}
+          {rows.map((row) =>
+            row.kind === 'group'
+              ? renderGroup(row.group, row.members)
+              : renderLayerItem(row.layer, row.index, false),
+          )}
         </ul>
       </div>
     </aside>

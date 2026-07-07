@@ -11,10 +11,12 @@ import { StylePopover } from './StylePopover';
 import { Iso3DViewer } from './Iso3DViewer';
 import { Legend } from './Legend';
 import { GeoOpsToolbar } from './GeoOpsToolbar';
+import { MeasureToolbar } from './MeasureToolbar';
+import { MeasureController, type MeasureMode, type MeasureResult } from './measure';
 import { bufferLayer, fcToLayer, type BufferUnits } from './geoOps';
 import { searchLand, type LandQueryParams } from './landQuery';
 import { BASEMAPS, basemapDefaultVersionIndex } from './basemaps';
-import type { BaseMapId, VectorLayer } from './types';
+import type { BaseMapId, LayerGroup, VectorLayer } from './types';
 import { SOIL_BATCH_KEY } from './types';
 import { detectKind, ensureNames, fileToGeoJSON, geometryBounds } from './importers';
 import { syncAllContours, syncContoursForSource, syncSingleContour } from './contour';
@@ -73,6 +75,7 @@ export default function App() {
   const [basemapOpacity, setBasemapOpacity] = useState(1);
   const [projectName, setProjectName] = useState('未命名專案');
   const [layers, setLayers] = useState<VectorLayer[]>([]);
+  const [layerGroups, setLayerGroups] = useState<LayerGroup[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [drawMode, setDrawMode] = useState<DrawMode>('static');
   const [drawCount, setDrawCount] = useState(0);
@@ -90,6 +93,8 @@ export default function App() {
   });
   const [iso3DTarget, setIso3DTarget] = useState<{ layerId: string; tabId: string; subId: string } | null>(null);
   const [obstacleCapture, setObstacleCapture] = useState<{ layerId: string; tabId: string; shape: 'polygon' | 'rectangle' | 'circle' } | null>(null);
+  const [measureMode, setMeasureMode] = useState<MeasureMode | null>(null);
+  const [measureResult, setMeasureResult] = useState<MeasureResult | null>(null);
 
   const toggleAttributes = useCallback((id: string) => {
     setAttributesLayerId((prev) => (prev === id ? null : id));
@@ -101,6 +106,7 @@ export default function App() {
 
   const mapRef = useRef<MLMap | null>(null);
   const drawRef = useRef<TerraDraw | null>(null);
+  const measureRef = useRef<MeasureController | null>(null);
   const colorCursor = useRef(0);
   const pendingProjectRef = useRef<ProjectState | null>(null);
   const mapViewAppliedRef = useRef(false);
@@ -131,6 +137,7 @@ export default function App() {
         setBasemapOpacity(project.basemapOpacity ?? 1);
         if (project.projectName) setProjectName(project.projectName);
         setLayers(syncAllExceedance(syncAllContours(project.layers.map((l) => ({ ...l, data: ensureNames(l.data) })))));
+        setLayerGroups(project.layerGroups ?? []);
         if (typeof project.colorCursor === 'number') colorCursor.current = project.colorCursor;
         pendingProjectRef.current = project;
         setSavedAt(project.savedAt ? new Date(project.savedAt) : null);
@@ -178,6 +185,7 @@ export default function App() {
       setBasemapOpacity(project.basemapOpacity ?? 1);
       setProjectName(project.projectName ?? '未命名專案');
       setLayers(syncAllExceedance(syncAllContours(project.layers.map((l) => ({ ...l, data: ensureNames(l.data) })))));
+      setLayerGroups(project.layerGroups ?? []);
       colorCursor.current = typeof project.colorCursor === 'number' ? project.colorCursor : 0;
       setSavedAt(project.savedAt ? new Date(project.savedAt) : null);
     } else {
@@ -187,6 +195,7 @@ export default function App() {
       setBasemapOpacity(1);
       setProjectName('未命名專案');
       setLayers([]);
+      setLayerGroups([]);
       colorCursor.current = 0;
       setSavedAt(null);
     }
@@ -195,6 +204,8 @@ export default function App() {
     setPickingCoords(null);
     setAddPointTarget(null);
     setDrawMode('static');
+    measureRef.current?.deactivate();
+    setMeasureMode(null);
     pendingProjectRef.current = project;
     mapViewAppliedRef.current = false;
     drawingsAppliedRef.current = false;
@@ -231,22 +242,52 @@ export default function App() {
       basemapOpacity,
       projectName,
       layers,
+      layerGroups,
       drawings: draw?.getSnapshot() ?? [],
       mapView: map
         ? { center: [map.getCenter().lng, map.getCenter().lat] as [number, number], zoom: map.getZoom() }
         : undefined,
       colorCursor: colorCursor.current,
     };
-  }, [basemapId, basemapVersionIndex, basemapOpacity, projectName, layers]);
+  }, [basemapId, basemapVersionIndex, basemapOpacity, projectName, layers, layerGroups]);
 
   const handleMapReady = useCallback(
     (map: MLMap) => {
       mapRef.current = map;
+      measureRef.current = new MeasureController(map, setMeasureResult);
       map.on('moveend', () => setMapMoveTick((t) => t + 1));
       applyPendingMapView();
     },
     [applyPendingMapView],
   );
+
+  const handleSelectMeasure = useCallback(
+    (mode: MeasureMode | null) => {
+      const ctrl = measureRef.current;
+      if (!ctrl) return;
+      if (!mode || mode === measureMode) {
+        ctrl.deactivate();
+        setMeasureMode(null);
+        return;
+      }
+      setDrawMode('static'); // 量測與繪圖互斥
+      ctrl.start(mode);
+      setMeasureMode(mode);
+    },
+    [measureMode],
+  );
+
+  const handleClearMeasure = useCallback(() => {
+    measureRef.current?.clearCurrent();
+  }, []);
+
+  // 選了任何繪圖工具就自動關掉量測，避免兩套點擊行為打架
+  useEffect(() => {
+    if (drawMode !== 'static' && measureRef.current?.getMode()) {
+      measureRef.current.deactivate();
+      setMeasureMode(null);
+    }
+  }, [drawMode]);
 
   const handleDrawReady = useCallback(
     (draw: TerraDraw) => {
@@ -477,10 +518,72 @@ export default function App() {
       if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return prev;
       const next = prev.slice();
       const [moved] = next.splice(fromIdx, 1);
+      // 拖到某圖層旁邊時，繼承目標列的群組歸屬：拖進群組成員之間 = 加入該群組；
+      // 拖到未分組列旁 = 離開群組。因為一定緊貼目標插入，群組成員的連續性得以維持。
+      const target = prev[toIdx];
+      const withGroup = moved.groupId === target.groupId ? moved : { ...moved, groupId: target.groupId };
       let insertAt = next.findIndex((l) => l.id === targetId);
       if (position === 'below') insertAt += 1;
-      next.splice(insertAt, 0, moved);
+      next.splice(insertAt, 0, withGroup);
       return next;
+    });
+  }, []);
+
+  // 群組管理 --------------------------------------------------------------
+  const createLayerGroup = useCallback(() => {
+    setLayerGroups((prev) => {
+      const n = prev.length + 1;
+      const group: LayerGroup = {
+        id: `grp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        name: `群組 ${n}`,
+      };
+      return [...prev, group];
+    });
+  }, []);
+
+  const renameLayerGroup = useCallback((groupId: string, name: string) => {
+    setLayerGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, name } : g)));
+  }, []);
+
+  const toggleLayerGroupCollapse = useCallback((groupId: string) => {
+    setLayerGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, collapsed: !g.collapsed } : g)));
+  }, []);
+
+  // 群組的勾選框：全開才算勾選；點一下 → 全部同步為（原本非全開就全開，全開就全關）
+  const toggleLayerGroupVisibility = useCallback((groupId: string) => {
+    setLayers((prev) => {
+      const members = prev.filter((l) => l.groupId === groupId);
+      if (members.length === 0) return prev;
+      const allVisible = members.every((l) => l.visible);
+      const nextVisible = !allVisible;
+      return prev.map((l) => (l.groupId === groupId ? { ...l, visible: nextVisible } : l));
+    });
+  }, []);
+
+  // 解散群組：成員全部變回未分組，圖層本身保留
+  const removeLayerGroup = useCallback((groupId: string) => {
+    setLayers((prev) => prev.map((l) => (l.groupId === groupId ? { ...l, groupId: undefined } : l)));
+    setLayerGroups((prev) => prev.filter((g) => g.id !== groupId));
+  }, []);
+
+  // 把某圖層指派進群組（拖到群組標題）或移出（groupId=null）
+  const assignLayerToGroup = useCallback((layerId: string, groupId: string | null) => {
+    setLayers((prev) => {
+      const fromIdx = prev.findIndex((l) => l.id === layerId);
+      if (fromIdx === -1) return prev;
+      const moved = { ...prev[fromIdx], groupId: groupId ?? undefined };
+      const rest = prev.slice();
+      rest.splice(fromIdx, 1);
+      let insertAt: number;
+      if (groupId) {
+        // 插到該群組現有成員區塊的最前面（若空群組則放到最上方）
+        const firstMember = rest.findIndex((l) => l.groupId === groupId);
+        insertAt = firstMember === -1 ? 0 : firstMember;
+      } else {
+        insertAt = 0; // 移出群組 → 放到最上方（未分組）
+      }
+      rest.splice(insertAt, 0, moved);
+      return rest;
     });
   }, []);
 
@@ -918,10 +1021,17 @@ export default function App() {
           projects.find((pr) => pr.id === currentProjectId)?.name || projectName || '未命名專案'
         }
         layers={layers}
+        layerGroups={layerGroups}
         onUpdateLayer={updateLayer}
         onRemoveLayer={removeLayer}
         onZoomLayer={zoomToLayer}
         onReorderLayer={reorderLayer}
+        onCreateGroup={createLayerGroup}
+        onRenameGroup={renameLayerGroup}
+        onToggleGroupCollapse={toggleLayerGroupCollapse}
+        onToggleGroupVisibility={toggleLayerGroupVisibility}
+        onRemoveGroup={removeLayerGroup}
+        onAssignToGroup={assignLayerToGroup}
         onShowAttributes={toggleAttributes}
         onToggleStyle={toggleStylePopover}
         onOpen3D={(layerId) => {
@@ -957,6 +1067,12 @@ export default function App() {
           onExport={handleExportDraw}
           onAddPointByCoords={handleAddPointByCoords}
           onAddPolygonByLandNo={handleAddPolygonByLandNo}
+        />
+        <MeasureToolbar
+          activeMode={measureMode}
+          result={measureResult}
+          onSelect={handleSelectMeasure}
+          onClear={handleClearMeasure}
         />
         <GeoOpsToolbar
           layers={layers}

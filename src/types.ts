@@ -51,9 +51,16 @@ export type PointShape =
   | 'target'
   | 'wye';
 
+export interface LayerGroup {
+  id: string;
+  name: string;
+  collapsed?: boolean;
+}
+
 export interface VectorLayer {
   id: string;
   name: string;
+  groupId?: string; // 所屬圖層群組（無則為未分組）
   visible: boolean;
   opacity: number;
   color: string;

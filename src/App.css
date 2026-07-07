@@ -2584,8 +2584,88 @@ body.resizing-x {
   margin-bottom: 0;
 }
 
-.layers-header .btn.xs.primary {
+.layers-header .btn.xs {
   flex-shrink: 0;
+}
+
+/* ---- 圖層群組 ---- */
+.layer-group {
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.35);
+  overflow: hidden;
+}
+
+.layer-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.layer-group-header.drop-into {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: rgba(59, 130, 246, 0.18);
+}
+
+.layer-group-header .group-collapse {
+  flex: none;
+}
+
+.group-folder-icon {
+  flex: none;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.layer-group-name {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.layer-group-name.editable {
+  cursor: text;
+}
+
+.group-count {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--panel-2);
+  border-radius: 10px;
+  padding: 1px 7px;
+}
+
+.layer-group-body {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.layer-group-body .layer-item.grouped {
+  border-left: 3px solid var(--accent);
+}
+
+.layer-group-empty {
+  list-style: none;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+  padding: 12px 8px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
 }
 
 .legend-overlay {
@@ -2752,4 +2832,67 @@ body.resizing-x {
 @keyframes rotate-hint {
   0%, 45% { transform: rotate(0deg); }
   55%, 100% { transform: rotate(90deg); }
+}
+
+/* ---- 量測工具（measure）---- */
+.measure-grid .tool-btn {
+  /* 三種量測名稱較長，改一欄列出更好讀 */
+  flex-direction: row;
+  justify-content: flex-start;
+  gap: 8px;
+}
+.measure-grid .tool-icon {
+  font-size: 15px;
+}
+
+.measure-result {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(244, 63, 94, 0.10);
+  border: 1px solid rgba(244, 63, 94, 0.35);
+}
+.measure-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: #f43f5e;
+  font-variant-numeric: tabular-nums;
+}
+.measure-detail {
+  font-size: 12px;
+  color: var(--muted);
+}
+.measure-progress {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* 地圖上的讀數氣泡（HTML marker） */
+.measure-readout {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.15;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(17, 24, 39, 0.85);
+  border: 1px solid #f43f5e;
+  color: #fff;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+}
+.measure-readout .mr-main {
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.measure-readout .mr-sub {
+  font-size: 10px;
+  color: #fda4af;
 }

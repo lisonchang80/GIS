@@ -1,5 +1,5 @@
 import type { GeoJSONStoreFeatures } from 'terra-draw';
-import type { BaseMapId, VectorLayer } from './types';
+import type { BaseMapId, LayerGroup, VectorLayer } from './types';
 
 export const PROJECT_KEY = 'gis-project-v1';
 export const PROJECT_VERSION = 1;
@@ -17,6 +17,7 @@ export interface ProjectPayload {
   basemapOpacity?: number;
   projectName?: string;
   layers: VectorLayer[];
+  layerGroups?: LayerGroup[];
   drawings?: GeoJSONStoreFeatures[];
   mapView?: MapViewState;
   colorCursor?: number;

@@ -20,6 +20,8 @@ interface Props {
   onOpen3D?: () => void;
   attributesActive: boolean;
   styleActive: boolean;
+  grouped?: boolean;
+  onRemoveFromGroup?: () => void;
   onDragStart: () => void;
   onDragEnd: () => void;
   onDragOverRow: (position: 'above' | 'below') => void;
@@ -147,6 +149,7 @@ export function LayerItem(p: Props) {
       className={[
         'layer-item',
         p.layer.visible ? '' : 'muted',
+        p.grouped ? 'grouped' : '',
         p.dragOver === 'above' ? 'drop-above' : '',
         p.dragOver === 'below' ? 'drop-below' : '',
       ].filter(Boolean).join(' ')}
@@ -218,6 +221,9 @@ export function LayerItem(p: Props) {
           >3D</button>
         )}
         <button className="icon-btn" title="縮放至圖層" onClick={p.onZoom}>⤢</button>
+        {p.grouped && p.onRemoveFromGroup && (
+          <button className="icon-btn" title="移出群組" onClick={p.onRemoveFromGroup}>⇤</button>
+        )}
         <button className="icon-btn danger" title="移除" onClick={p.onRemove}>×</button>
       </div>
       {isWaterLevel && waterLevelExpanded && wl && (

@@ -68,6 +68,15 @@ op.open(urllib.request.Request(f"http://127.0.0.1:8011/api/projects/{pid}",
 `preview_eval`：`localStorage.setItem('gis-current-project-id', String(pid)); location.reload()` →
 `sleep 3` 等重載。
 
+### ⚠️ preview_start 綁 5180，被 Portfolio 正式站占用時的 fallback
+preview_start 對本 workspace **固定要 5180**（改 launch.json 的 port / 加 autoPort 都無效）。
+5180 常被 **Portfolio 正式站**（`uvicorn server.main:app --port 5180`, PID 是別的專案）占住 → preview_start 一直失敗。
+**別砍 5180**（那是 tinghaochang.com 正式站）。改用 **claude-in-chrome** 驅動自己起的 dev server：
+1. `npx vite --port 5191 --strictPort`（背景；vite.config proxy 已在 Step 1 指到 8011）。
+2. `list_connected_browsers` → `navigate http://localhost:5191/` → `javascript_tool` 跑 `fetch('/api/auth/dev-login',{method:'POST'})` 設 cookie → `localStorage.setItem('gis-current-project-id',String(pid)); location.reload()`。
+3. 之後用 `javascript_tool` 讀 DOM 斷言（等同 preview_eval）。
+- ⚠️ **模擬 HTML5 拖放**要在 dispatch 之間 `await`：dragstart 改了 React state（draggingId）後要讓它**重渲染**，drop handler 的 closure 才讀得到新值；同一個同步 tick 內 dragstart→drop 會讀到舊 draggingId=null。做法：`fire(el,'dragstart'); await sleep(60); fire(header,'dragover'); fire(header,'drop')`。
+
 ## Step 5 — 量 DOM 驗證（不要截圖）
 - ⚠️ **量寬度前先 `preview_resize`**：preview 視窗預設 `innerWidth`≈0/極窄 → 側欄(320+)會吃滿、`.bottom-dock` 算出 0 寬、版面量測全錯。先 `preview_resize {width:1440,height:900}` 再量 panel/dock/responsive。
 `preview_eval` 跑 IIFE：找按鈕點開（`▤` 屬性表、`.dock-tab`、`.hydro-bottom-bar button` 等）、讀文字斷言。

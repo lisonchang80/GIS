@@ -58,6 +58,11 @@ function computeContourKey(wl: VectorLayer['waterLevel']): string {
   });
 }
 
+function loadFailedMessage(name: string | undefined, e: unknown, stayed = false): string {
+  const head = `無法載入專案「${name || '未命名專案'}」（${(e as Error).message}）。`;
+  return head + (stayed ? '仍停留在目前的專案。' : '為避免覆蓋雲端資料，自動儲存已暫停，請重新整理頁面再試。');
+}
+
 function cleanDrawProps(props: Record<string, unknown> | null | undefined): Record<string, unknown> {
   if (!props) return {};
   const out: Record<string, unknown> = {};
@@ -133,8 +138,14 @@ export default function App() {
       if (list.length > 0) {
         const savedId = Number(localStorage.getItem(CURRENT_PROJECT_KEY));
         const chosen = list.find((p) => p.id === savedId) ?? list[0];
-        chosenId = chosen.id;
-        project = await loadProject(chosen.id);
+        try {
+          project = await loadProject(chosen.id);
+          chosenId = chosen.id;
+        } catch (e) {
+          // 不設 currentProjectId → 自動存檔不會啟動，雲端專案不會被空白畫面覆蓋
+          console.warn('loadProject failed', e);
+          setError(loadFailedMessage(chosen.name, e));
+        }
       }
       if (project) {
         setBasemapId(project.basemapId);
@@ -905,13 +916,21 @@ export default function App() {
       }
       // 先載入、再於同一個 tick 切換 id 與內容：若先 setCurrentProjectId，載入期間
       // 自動存檔（500ms）會把「舊專案的內容」寫進新專案的 id。
-      const project = await loadProject(id);
+      let project: ProjectState | null;
+      try {
+        project = await loadProject(id);
+      } catch (e) {
+        console.warn('loadProject failed', e);
+        setError(loadFailedMessage(projects.find((p) => p.id === id)?.name, e, currentProjectId != null));
+        return; // 留在目前的專案
+      }
+      setError(null);
       localStorage.setItem(CURRENT_PROJECT_KEY, String(id));
       setCurrentProjectId(id);
       applyProject(project);
       setProjects(await listProjects());
     },
-    [currentProjectId, buildPayload, applyProject],
+    [currentProjectId, buildPayload, applyProject, projects],
   );
 
   const handleNewProject = useCallback(async (name: string) => {
@@ -970,7 +989,16 @@ export default function App() {
     const next = list[0] ?? null;
     if (next) {
       // 同 handleSwitchProject：內容載入後才把 id 指過去，避免把已刪專案的內容存進 next
-      const project = await loadProject(next.id);
+      let project: ProjectState | null;
+      try {
+        project = await loadProject(next.id);
+      } catch (e) {
+        console.warn('loadProject failed', e);
+        setCurrentProjectId(null); // 暫停自動存檔，不覆蓋 next
+        applyProject(null);
+        setError(loadFailedMessage(next.name, e));
+        return;
+      }
       localStorage.setItem(CURRENT_PROJECT_KEY, String(next.id));
       setCurrentProjectId(next.id);
       applyProject(project);

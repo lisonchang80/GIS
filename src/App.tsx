@@ -903,9 +903,11 @@ export default function App() {
           console.warn('save before switch failed', e);
         }
       }
+      // 先載入、再於同一個 tick 切換 id 與內容：若先 setCurrentProjectId，載入期間
+      // 自動存檔（500ms）會把「舊專案的內容」寫進新專案的 id。
+      const project = await loadProject(id);
       localStorage.setItem(CURRENT_PROJECT_KEY, String(id));
       setCurrentProjectId(id);
-      const project = await loadProject(id);
       applyProject(project);
       setProjects(await listProjects());
     },
@@ -966,12 +968,15 @@ export default function App() {
     setProjects(list);
     if (id !== currentProjectId) return;
     const next = list[0] ?? null;
-    setCurrentProjectId(next?.id ?? null);
     if (next) {
+      // 同 handleSwitchProject：內容載入後才把 id 指過去，避免把已刪專案的內容存進 next
+      const project = await loadProject(next.id);
       localStorage.setItem(CURRENT_PROJECT_KEY, String(next.id));
-      applyProject(await loadProject(next.id));
+      setCurrentProjectId(next.id);
+      applyProject(project);
       setProjectName(next.name || '未命名專案');
     } else {
+      setCurrentProjectId(null);
       localStorage.removeItem(CURRENT_PROJECT_KEY);
       applyProject(null);
     }

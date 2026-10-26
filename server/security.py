@@ -10,6 +10,7 @@ BodySizeLimit: uvicorn has no body limit, and FastAPI reads + JSON-parses a
 Pydantic body *before* the auth dependency runs, so without this an anonymous
 client could make the server buffer an arbitrarily large body.
 """
+import os
 import re
 from urllib.parse import urlsplit
 
@@ -22,6 +23,15 @@ SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 DEFAULT_BODY_LIMIT = 64 * 1024  # login token / project name: a few KB at most
 # Whole-project saves are the only big bodies (ProjectState JSON).
 _PROJECT_SAVE = re.compile(r"^/api/project(s/[^/]+)?$")
+DEFAULT_PROJECT_MB = 50  # the bundled demo project is ~3.4 MB
+
+
+def project_body_limit() -> int:
+    try:
+        mb = float(os.environ.get("GIS_MAX_PROJECT_MB", DEFAULT_PROJECT_MB))
+    except ValueError:
+        mb = DEFAULT_PROJECT_MB
+    return int(mb * 1024 * 1024)
 
 
 def is_same_origin_request(headers: Headers, allowed_origins=frozenset()) -> bool:

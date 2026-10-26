@@ -41,3 +41,20 @@ def test_normal_requests_and_project_saves_still_work(client):
     assert client.put(f"/api/projects/{pid}", json=project).status_code == 200
     assert client.put("/api/project", json=project).status_code == 200
     assert len(client.get(f"/api/projects/{pid}").json()["layers"][0]["blob"]) == 5 * BIG
+
+
+# 【待使用者決定】整包專案存檔的上限（預設 50 MB，可用 GIS_MAX_PROJECT_MB 調整）
+def test_project_save_has_configurable_cap(make_client):
+    from server import security
+
+    client = make_client(GIS_MAX_PROJECT_MB="1")
+    login(client)
+    pid = client.post("/api/projects", json={"name": "p"}).json()["id"]
+    project = {"version": 1, "layers": [{"blob": "x" * (2 * BIG)}]}
+    assert client.put(f"/api/projects/{pid}", json=project).status_code == 413
+    assert client.put("/api/project", json=project).status_code == 413
+    small = {"version": 1, "layers": [{"blob": "x" * (BIG // 2)}]}
+    assert client.put(f"/api/projects/{pid}", json=small).status_code == 200
+
+    make_client()
+    assert security.project_body_limit() == 50 * 1024 * 1024

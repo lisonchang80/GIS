@@ -19,6 +19,8 @@ dist_bad
 # Backend (FastAPI + SQLite)
 server/.venv
 server/__pycache__
+server/tests/__pycache__
+.pytest_cache
 server/gis.db
 server/.env
 .env.local

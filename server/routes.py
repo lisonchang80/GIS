@@ -11,7 +11,7 @@ from . import auth, db
 router = APIRouter(prefix="/api")
 
 DEV_LOGIN = os.environ.get("GIS_DEV_LOGIN") == "1"
-COOKIE_SECURE = os.environ.get("GIS_COOKIE_SECURE", "1") == "1"
+COOKIE_SECURE = auth.COOKIE_SECURE
 
 
 def _public_user(u):
@@ -70,7 +70,10 @@ def dev_login(response: Response):
 
 @router.post("/auth/logout")
 def auth_logout(response: Response):
-    response.delete_cookie(auth.COOKIE_NAME, path="/")
+    # Same attributes as when set: browsers ignore a __Host- Set-Cookie without Secure.
+    response.delete_cookie(
+        auth.COOKIE_NAME, path="/", secure=COOKIE_SECURE, httponly=True, samesite="lax"
+    )
     return {"ok": True}
 
 

@@ -26,7 +26,11 @@ if SESSION_SECRET in _PUBLIC_SECRETS:
     SESSION_SECRET = secrets.token_urlsafe(48)
 GOOGLE_CLIENT_ID = os.environ.get("GIS_GOOGLE_CLIENT_ID", "")
 
-COOKIE_NAME = "gis_session"
+COOKIE_SECURE = os.environ.get("GIS_COOKIE_SECURE", "1") == "1"
+# __Host- prefix: browsers only accept it with Secure + Path=/ and no Domain, so a
+# page on a sibling *.tinghaochang.com can't plant (toss) a session cookie that we
+# would pick up. Plain-http dev can't use the prefix.
+COOKIE_NAME = "__Host-gis_session" if COOKIE_SECURE else "gis_session"
 SESSION_MAX_AGE = 60 * 60 * 24 * 30  # 30 days
 
 _serializer = URLSafeTimedSerializer(SESSION_SECRET, salt="gis-session")

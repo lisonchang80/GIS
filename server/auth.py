@@ -6,11 +6,24 @@ issuer / expiry, then issue our OWN signed session token (itsdangerous) stored
 in an httpOnly cookie. No client secret and no redirect dance are needed because
 we never call Google APIs on the user's behalf.
 """
+import logging
 import os
+import secrets
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
-SESSION_SECRET = os.environ.get("GIS_SESSION_SECRET", "dev-insecure-secret-change-me")
+log = logging.getLogger(__name__)
+
+# Strings that are public (this repo / the env.local.bat example) and therefore
+# must never be used to sign sessions: anyone could forge a cookie for any uid.
+_PUBLIC_SECRETS = {"", "dev-insecure-secret-change-me", "replace-with-a-long-random-string"}
+
+SESSION_SECRET = os.environ.get("GIS_SESSION_SECRET", "").strip()
+if SESSION_SECRET in _PUBLIC_SECRETS:
+    # Fail safe: a random per-process secret. Sessions stop surviving a restart
+    # (everyone re-logs in), but nobody can forge one.
+    log.warning("GIS_SESSION_SECRET is unset or a placeholder; using a random secret (sessions reset on restart)")
+    SESSION_SECRET = secrets.token_urlsafe(48)
 GOOGLE_CLIENT_ID = os.environ.get("GIS_GOOGLE_CLIENT_ID", "")
 
 COOKIE_NAME = "gis_session"

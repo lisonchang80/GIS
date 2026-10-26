@@ -1,5 +1,6 @@
 """/api/* routes: Google auth + per-user project CRUD."""
 import json
+import logging
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -9,6 +10,7 @@ from pydantic import BaseModel
 from . import auth, db
 
 router = APIRouter(prefix="/api")
+log = logging.getLogger(__name__)
 
 DEV_LOGIN = os.environ.get("GIS_DEV_LOGIN") == "1"
 COOKIE_SECURE = auth.COOKIE_SECURE
@@ -47,10 +49,14 @@ class GoogleLoginBody(BaseModel):
 
 @router.post("/auth/google")
 def auth_google(body: GoogleLoginBody, response: Response):
+    if not auth.GOOGLE_CLIENT_ID:
+        log.error("GIS_GOOGLE_CLIENT_ID not configured - Google login disabled")
+        raise HTTPException(status_code=500, detail="login not configured")
     try:
         info = auth.verify_google_credential(body.credential)
-    except Exception as e:  # noqa: BLE001 - surface a clean 401
-        raise HTTPException(status_code=401, detail=f"invalid credential: {e}")
+    except Exception as e:  # noqa: BLE001 - surface a clean 401, details only in the log
+        log.warning("rejected Google credential: %s", e)
+        raise HTTPException(status_code=401, detail="invalid credential")
     uid = db.upsert_user(
         info["sub"], info.get("email", ""), info.get("name"), info.get("picture")
     )

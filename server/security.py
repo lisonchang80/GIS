@@ -5,13 +5,23 @@ subdomains (evil.tinghaochang.com -> gis.tinghaochang.com is "same-site"), so a
 state-changing request is only accepted when the browser says it came from this
 exact origin. Non-browser clients (curl, scripts) send neither Sec-Fetch-Site nor
 Origin and are let through: they don't carry a victim's cookie automatically.
+
+BodySizeLimit: uvicorn has no body limit, and FastAPI reads + JSON-parses a
+Pydantic body *before* the auth dependency runs, so without this an anonymous
+client could make the server buffer an arbitrarily large body.
 """
+import re
 from urllib.parse import urlsplit
 
 from starlette.datastructures import Headers
+from starlette.exceptions import HTTPException
 from starlette.responses import JSONResponse
 
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+DEFAULT_BODY_LIMIT = 64 * 1024  # login token / project name: a few KB at most
+# Whole-project saves are the only big bodies (ProjectState JSON).
+_PROJECT_SAVE = re.compile(r"^/api/project(s/[^/]+)?$")
 
 
 def is_same_origin_request(headers: Headers, allowed_origins=frozenset()) -> bool:
@@ -43,3 +53,40 @@ class SameOriginWriteGuard:
             await response(scope, receive, send)
             return
         await self.app(scope, receive, send)
+
+
+class BodySizeLimit:
+    def __init__(self, app, default_limit=DEFAULT_BODY_LIMIT, project_limit=None):
+        self.app = app
+        self.default_limit = default_limit
+        self.project_limit = project_limit  # None = unlimited
+
+    def _limit_for(self, scope):
+        if scope["method"] == "PUT" and _PROJECT_SAVE.match(scope["path"]):
+            return self.project_limit
+        return self.default_limit
+
+    async def __call__(self, scope, receive, send):
+        limit = self._limit_for(scope) if scope["type"] == "http" else None
+        if limit is None:
+            await self.app(scope, receive, send)
+            return
+        declared = Headers(scope=scope).get("content-length")
+        if declared is not None and (not declared.isdigit() or int(declared) > limit):
+            response = JSONResponse({"detail": "request body too large"}, status_code=413)
+            await response(scope, receive, send)
+            return
+
+        received = 0
+
+        async def limited_receive():
+            # Chunked bodies have no Content-Length: count as they stream in.
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > limit:
+                    raise HTTPException(status_code=413, detail="request body too large")
+            return message
+
+        await self.app(scope, limited_receive, send)

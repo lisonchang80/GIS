@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import db
 from .routes import router
-from .security import SameOriginWriteGuard
+from .security import BodySizeLimit, SameOriginWriteGuard
 
 db.init_db()
 
@@ -35,6 +35,7 @@ app.add_middleware(
 )
 # Writes must come from this origin (or an explicitly CORS-allowed one).
 app.add_middleware(SameOriginWriteGuard, allowed_origins=cors_origins)
+app.add_middleware(BodySizeLimit)
 
 app.include_router(router)
 

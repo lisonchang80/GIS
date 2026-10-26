@@ -83,6 +83,7 @@ export function MapView({ basemap, basemapVersionIndex, basemapOpacity, layers, 
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MLMap | null>(null);
   const drawRef = useRef<TerraDraw | null>(null);
+  /* eslint-disable react-hooks/refs -- latest-ref：讓 maplibre 事件 callback 讀到最新的 props */
   const layersRef = useRef<VectorLayer[]>(layers);
   layersRef.current = layers;
   const basemapOpacityRef = useRef(basemapOpacity);
@@ -94,6 +95,7 @@ export function MapView({ basemap, basemapVersionIndex, basemapOpacity, layers, 
   onDateLabelMoveRef.current = onDateLabelMove;
   const obstaclesRef = useRef<ObstacleZone[]>(obstacles ?? []);
   obstaclesRef.current = obstacles ?? [];
+  /* eslint-enable react-hooks/refs */
 
   useEffect(() => {
     const map = mapRef.current;
@@ -701,7 +703,7 @@ function syncDateMarkers(
   for (const layer of layers) {
     const dl = layer.waterLevel?.dateLabel;
     if (!layer.visible || !layer.waterLevel || !dl?.visible) continue;
-    let pos: [number, number] | null = null;
+    let pos: [number, number] | null;
     if (typeof dl.lng === 'number' && typeof dl.lat === 'number') {
       pos = [dl.lng, dl.lat];
     } else {

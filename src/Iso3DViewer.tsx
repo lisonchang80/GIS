@@ -416,6 +416,7 @@ export function Iso3DViewer({
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 沒有資料時清掉前一次渲染並結束 loading
     if (!vol || !vol.hasData) { container.innerHTML = ''; setLoading(false); return; }
     let disposed = false;
     let cleanup: () => void = () => {};

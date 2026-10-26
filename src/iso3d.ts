@@ -287,7 +287,7 @@ export function buildSurveyVolume(p: SurveyVolumeParams): SurveyVolume {
     }
 
     // isobands 只負責「有內部等高線」的色帶多邊形；退化色帶（填滿整格網）改用 bbox 矩形。
-    let bandsFC: FeatureCollection | null = null;
+    let bandsFC: FeatureCollection | null;
     try {
       const fc = turf.featureCollection(
         Array.from({ length: N * N }, (_, idx) => turf.point([X[idx % N], Y[Math.floor(idx / N)]], { z: grid[idx] })),

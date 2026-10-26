@@ -23,8 +23,8 @@ app = FastAPI(title="GIS backend")
 
 # CORS is only needed when the frontend is served from a different origin.
 # Dev uses the Vite proxy (same origin) and prod serves dist/ here (same origin),
-# so this mainly covers a directly-hit dev frontend on :5173.
-origins = os.environ.get("GIS_CORS_ORIGINS", "http://localhost:5173").split(",")
+# so by default no other origin is trusted; set GIS_CORS_ORIGINS to opt in.
+origins = os.environ.get("GIS_CORS_ORIGINS", "").split(",")
 cors_origins = [o.strip() for o in origins if o.strip()]
 app.add_middleware(
     CORSMiddleware,

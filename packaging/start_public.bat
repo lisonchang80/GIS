@@ -26,7 +26,7 @@ REM gitignored file so they never get committed:
 if exist "%~dp0env.local.bat" call "%~dp0env.local.bat"
 
 if "%GIS_GOOGLE_CLIENT_ID%"=="" echo [WARN] GIS_GOOGLE_CLIENT_ID is empty - Google login will fail. Fill packaging\env.local.bat
-if "%GIS_SESSION_SECRET%"=="" echo [WARN] GIS_SESSION_SECRET is empty - using insecure default. Fill packaging\env.local.bat
+if "%GIS_SESSION_SECRET%"=="" echo [WARN] GIS_SESSION_SECRET is empty - using a random per-process secret, everyone is logged out on restart. Fill packaging\env.local.bat
 
 echo Starting GIS server on 127.0.0.1:8000 ...
 "D:\Claude code\GIS\server\.venv\Scripts\python.exe" -m uvicorn server.main:app --host 127.0.0.1 --port 8000 --app-dir "D:\Claude code\GIS"

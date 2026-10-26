@@ -1,5 +1,6 @@
 """/api/* routes: Google auth + per-user project CRUD."""
 import json
+import logging
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -9,9 +10,10 @@ from pydantic import BaseModel
 from . import auth, db
 
 router = APIRouter(prefix="/api")
+log = logging.getLogger(__name__)
 
 DEV_LOGIN = os.environ.get("GIS_DEV_LOGIN") == "1"
-COOKIE_SECURE = os.environ.get("GIS_COOKIE_SECURE", "1") == "1"
+COOKIE_SECURE = auth.COOKIE_SECURE
 
 
 def _public_user(u):
@@ -32,6 +34,32 @@ def set_session_cookie(response: Response, uid: int) -> None:
     )
 
 
+async def read_project_payload(request: Request, default_name: str):
+    """Parse + validate a ProjectState body -> (version, name, json_text); bad input is a 400."""
+    try:
+        payload = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="body must be JSON")
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="payload must be an object")
+    try:
+        version = int(payload.get("version", 1))
+    except (TypeError, ValueError, OverflowError):
+        raise HTTPException(status_code=400, detail="invalid version")
+    if not 0 <= version < 2**31:
+        raise HTTPException(status_code=400, detail="invalid version")
+    name = payload.get("projectName") or default_name
+    if not isinstance(name, str):
+        raise HTTPException(status_code=400, detail="invalid projectName")
+    try:
+        # NaN/Infinity parse fine but can't be sent back (JSONResponse refuses them),
+        # which would make the stored project unloadable.
+        data_json = json.dumps(payload, ensure_ascii=False, allow_nan=False)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="NaN/Infinity not allowed")
+    return version, name, data_json
+
+
 def current_uid(request: Request) -> int:
     token = request.cookies.get(auth.COOKIE_NAME)
     uid = auth.read_session(token) if token else None
@@ -47,10 +75,14 @@ class GoogleLoginBody(BaseModel):
 
 @router.post("/auth/google")
 def auth_google(body: GoogleLoginBody, response: Response):
+    if not auth.GOOGLE_CLIENT_ID:
+        log.error("GIS_GOOGLE_CLIENT_ID not configured - Google login disabled")
+        raise HTTPException(status_code=500, detail="login not configured")
     try:
         info = auth.verify_google_credential(body.credential)
-    except Exception as e:  # noqa: BLE001 - surface a clean 401
-        raise HTTPException(status_code=401, detail=f"invalid credential: {e}")
+    except Exception as e:  # noqa: BLE001 - surface a clean 401, details only in the log
+        log.warning("rejected Google credential: %s", e)
+        raise HTTPException(status_code=401, detail="invalid credential")
     uid = db.upsert_user(
         info["sub"], info.get("email", ""), info.get("name"), info.get("picture")
     )
@@ -70,7 +102,10 @@ def dev_login(response: Response):
 
 @router.post("/auth/logout")
 def auth_logout(response: Response):
-    response.delete_cookie(auth.COOKIE_NAME, path="/")
+    # Same attributes as when set: browsers ignore a __Host- Set-Cookie without Secure.
+    response.delete_cookie(
+        auth.COOKIE_NAME, path="/", secure=COOKIE_SECURE, httponly=True, samesite="lax"
+    )
     return {"ok": True}
 
 
@@ -90,12 +125,8 @@ def get_project_route(uid: int = Depends(current_uid)):
 
 @router.put("/project")
 async def put_project_route(request: Request, uid: int = Depends(current_uid)):
-    payload = await request.json()
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="payload must be an object")
-    version = int(payload.get("version", 1))
-    name = payload.get("projectName") or "My Project"
-    saved_at = db.put_project(uid, version, json.dumps(payload, ensure_ascii=False), name)
+    version, name, data_json = await read_project_payload(request, "My Project")
+    saved_at = db.put_project(uid, version, data_json, name)
     return {"savedAt": saved_at}
 
 
@@ -136,14 +167,8 @@ def get_project_by_id_route(pid: int, uid: int = Depends(current_uid)):
 
 @router.put("/projects/{pid}")
 async def put_project_by_id_route(pid: int, request: Request, uid: int = Depends(current_uid)):
-    payload = await request.json()
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="payload must be an object")
-    version = int(payload.get("version", 1))
-    name = payload.get("projectName") or "未命名專案"
-    ok, ts = db.update_project_by_id(
-        uid, pid, version, json.dumps(payload, ensure_ascii=False), name
-    )
+    version, name, data_json = await read_project_payload(request, "未命名專案")
+    ok, ts = db.update_project_by_id(uid, pid, version, data_json, name)
     if not ok:
         raise HTTPException(status_code=404, detail="not found")
     return {"savedAt": ts}

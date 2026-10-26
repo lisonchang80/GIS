@@ -217,6 +217,7 @@ export function AttributeTable({
 
   useEffect(() => {
     if ((layer.hydroDates?.length ?? 0) > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 切換圖層時才展開，刻意只依 layer.id
       setHydroOpen(true);
     }
   }, [layer.id]);
@@ -1839,6 +1840,7 @@ function SoilSurveyTabPanel({
 
   useEffect(() => {
     if (activeSub && tab.substances.some((s) => s.id === activeSub)) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 物質被刪除時把選取重設到第一個
     setActiveSub(tab.substances[0]?.id ?? null);
   }, [tab.id, tab.substances, activeSub]);
 
@@ -2427,6 +2429,7 @@ function GwConcTabPanel({
 
   useEffect(() => {
     if (activeSub && tab.substances.some((s) => s.id === activeSub)) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 物質被刪除時把選取重設到第一個
     setActiveSub(tab.substances[0]?.id ?? null);
   }, [tab.id, tab.substances, activeSub]);
 
@@ -3364,6 +3367,7 @@ function SoilConcTabPanel({
 
   useEffect(() => {
     if (activeSub && tab.substances.some((s) => s.id === activeSub)) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 物質被刪除時把選取重設到第一個
     setActiveSub(tab.substances[0]?.id ?? null);
   }, [tab.id, tab.substances, activeSub]);
 
@@ -3527,6 +3531,7 @@ function SoilConcTabPanel({
   };
 
   const makeExceedanceLayer = (name: string, features: Feature[], config: ExceedanceConfig): VectorLayer => ({
+    // eslint-disable-next-line react-hooks/purity -- 只在「生成」按鈕的事件處理中呼叫，不在 render 期間
     id: `soilx-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     name,
     visible: true,

@@ -226,6 +226,7 @@ export function StylePopover({ layer, sourceLayer, onClose, onUpdate }: Props) {
 
   const [majorIntervalDraft, setMajorIntervalDraft] = useState<string>(String(linesCfg.majorInterval));
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 外部改了線距時同步輸入框草稿
     setMajorIntervalDraft(String(linesCfg.majorInterval));
   }, [linesCfg.majorInterval]);
 

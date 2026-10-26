@@ -15,22 +15,35 @@ from fastapi.staticfiles import StaticFiles
 
 from . import db
 from .routes import router
+from .security import BodySizeLimit, SameOriginWriteGuard, project_body_limit
 
 db.init_db()
 
-app = FastAPI(title="GIS backend")
+# Interactive API docs only in dev: Swagger UI pulls scripts from a CDN and would
+# run them on the production origin, next to the session cookie.
+_dev = os.environ.get("GIS_DEV_LOGIN") == "1"
+app = FastAPI(
+    title="GIS backend",
+    docs_url="/docs" if _dev else None,
+    redoc_url="/redoc" if _dev else None,
+    openapi_url="/openapi.json" if _dev else None,
+)
 
 # CORS is only needed when the frontend is served from a different origin.
 # Dev uses the Vite proxy (same origin) and prod serves dist/ here (same origin),
-# so this mainly covers a directly-hit dev frontend on :5173.
-origins = os.environ.get("GIS_CORS_ORIGINS", "http://localhost:5173").split(",")
+# so by default no other origin is trusted; set GIS_CORS_ORIGINS to opt in.
+origins = os.environ.get("GIS_CORS_ORIGINS", "").split(",")
+cors_origins = [o.strip() for o in origins if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in origins if o.strip()],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Writes must come from this origin (or an explicitly CORS-allowed one).
+app.add_middleware(SameOriginWriteGuard, allowed_origins=cors_origins)
+app.add_middleware(BodySizeLimit, project_limit=project_body_limit())
 
 app.include_router(router)
 

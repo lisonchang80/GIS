@@ -245,6 +245,25 @@ export function buildIDWGrid(
     { units: 'kilometers' },
   );
   const cellSize = Math.max(widthKm / gridCells, 0.0005);
+  // 格網至少要 2×2，turf.isolines/isobands 才不會丟例外。格距只依寬度決定，東西長、
+  // 南北窄的線狀場址（如沿道路的井）高度可能不到一格 → 只有這種情況把窄邊對稱補到
+  // 略大於一格（其餘輸入格網不變）。
+  const heightKm = turf.distance(
+    [expanded[0], expanded[1]],
+    [expanded[0], expanded[3]],
+    { units: 'kilometers' },
+  );
+  const minSpanKm = cellSize * 1.05;
+  if (heightKm < cellSize) {
+    const pad = ((minSpanKm - heightKm) / 2) * ((expanded[3] - expanded[1]) / heightKm);
+    expanded[1] -= pad;
+    expanded[3] += pad;
+  }
+  if (widthKm < cellSize) {
+    const pad = ((minSpanKm - widthKm) / 2) * ((expanded[2] - expanded[0]) / widthKm);
+    expanded[0] -= pad;
+    expanded[2] += pad;
+  }
   const grid = turf.pointGrid(expanded, cellSize, { units: 'kilometers' }) as FeatureCollection<Point>;
 
   let workingSamples = samples;

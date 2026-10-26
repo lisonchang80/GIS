@@ -73,24 +73,18 @@ export async function createProject(name = '未命名專案'): Promise<ProjectMe
   }
 }
 
+// null = the project exists but is still empty (204). Any failure throws instead:
+// callers that treated a failed load as "empty" let autosave overwrite the
+// stored project with a blank one.
 export async function loadProject(id: number): Promise<ProjectState | null> {
-  try {
-    const r = await fetch(`/api/projects/${id}`, { credentials: 'include' });
-    if (r.status === 204 || r.status === 404 || r.status === 401) return null;
-    if (!r.ok) {
-      console.warn('loadProject failed', r.status);
-      return null;
-    }
-    const data = (await r.json()) as ProjectState;
-    if (!data || data.version !== PROJECT_VERSION) {
-      if (data) console.warn(`Ignoring project with incompatible version: ${data.version}`);
-      return null;
-    }
-    return data;
-  } catch (e) {
-    console.warn('loadProject failed', e);
-    return null;
+  const r = await fetch(`/api/projects/${id}`, { credentials: 'include' });
+  if (r.status === 204) return null;
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const data = (await r.json()) as ProjectState;
+  if (!data || data.version !== PROJECT_VERSION) {
+    throw new Error(`不支援的專案版本: ${data?.version}`);
   }
+  return data;
 }
 
 export async function saveProject(id: number, payload: ProjectPayload): Promise<void> {

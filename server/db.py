@@ -87,6 +87,9 @@ def init_db() -> None:
 def upsert_user(google_sub: str, email: str, name, picture) -> int:
     conn = get_conn()
     try:
+        # 先拿寫入鎖再 SELECT：同一帳號同時登入（雙擊、多分頁）時，否則兩邊都以為
+        # 「還沒有這個人／還沒發範本」→ UNIQUE 衝突 500，或重複發好幾份範例專案。
+        conn.execute("BEGIN IMMEDIATE")
         ts = now_iso()
         row = conn.execute(
             "SELECT id, seeded_demo FROM users WHERE google_sub = ?", (google_sub,)

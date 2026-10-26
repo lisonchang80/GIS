@@ -1,5 +1,5 @@
-// @ts-nocheck
 /* eslint-disable */
+// @ts-nocheck
 /*!
  * WebTour — dependency-free spotlight onboarding tour (single file, self-styled).
  *

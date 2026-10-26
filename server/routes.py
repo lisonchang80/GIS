@@ -34,6 +34,32 @@ def set_session_cookie(response: Response, uid: int) -> None:
     )
 
 
+async def read_project_payload(request: Request, default_name: str):
+    """Parse + validate a ProjectState body -> (version, name, json_text); bad input is a 400."""
+    try:
+        payload = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="body must be JSON")
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="payload must be an object")
+    try:
+        version = int(payload.get("version", 1))
+    except (TypeError, ValueError, OverflowError):
+        raise HTTPException(status_code=400, detail="invalid version")
+    if not 0 <= version < 2**31:
+        raise HTTPException(status_code=400, detail="invalid version")
+    name = payload.get("projectName") or default_name
+    if not isinstance(name, str):
+        raise HTTPException(status_code=400, detail="invalid projectName")
+    try:
+        # NaN/Infinity parse fine but can't be sent back (JSONResponse refuses them),
+        # which would make the stored project unloadable.
+        data_json = json.dumps(payload, ensure_ascii=False, allow_nan=False)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="NaN/Infinity not allowed")
+    return version, name, data_json
+
+
 def current_uid(request: Request) -> int:
     token = request.cookies.get(auth.COOKIE_NAME)
     uid = auth.read_session(token) if token else None
@@ -99,12 +125,8 @@ def get_project_route(uid: int = Depends(current_uid)):
 
 @router.put("/project")
 async def put_project_route(request: Request, uid: int = Depends(current_uid)):
-    payload = await request.json()
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="payload must be an object")
-    version = int(payload.get("version", 1))
-    name = payload.get("projectName") or "My Project"
-    saved_at = db.put_project(uid, version, json.dumps(payload, ensure_ascii=False), name)
+    version, name, data_json = await read_project_payload(request, "My Project")
+    saved_at = db.put_project(uid, version, data_json, name)
     return {"savedAt": saved_at}
 
 
@@ -145,14 +167,8 @@ def get_project_by_id_route(pid: int, uid: int = Depends(current_uid)):
 
 @router.put("/projects/{pid}")
 async def put_project_by_id_route(pid: int, request: Request, uid: int = Depends(current_uid)):
-    payload = await request.json()
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="payload must be an object")
-    version = int(payload.get("version", 1))
-    name = payload.get("projectName") or "未命名專案"
-    ok, ts = db.update_project_by_id(
-        uid, pid, version, json.dumps(payload, ensure_ascii=False), name
-    )
+    version, name, data_json = await read_project_payload(request, "未命名專案")
+    ok, ts = db.update_project_by_id(uid, pid, version, data_json, name)
     if not ok:
         raise HTTPException(status_code=404, detail="not found")
     return {"savedAt": ts}

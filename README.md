@@ -43,6 +43,20 @@ npm run dev        # 前端（Vite）
 
 後端與部署見 `server/` 與 `docs/DEPLOY.md`。
 
+## 測試
+
+一行跑完前端（Vitest）與後端（pytest，暫存 SQLite、不連外網）的所有測試：
+
+```bash
+npm test
+```
+
+第一次執行前先裝後端測試依賴（venv 建法見 `server/README.md`）：
+`server\.venv\Scripts\python -m pip install -r server/requirements-dev.txt`。
+後端測試會優先使用 `server/.venv` 的 Python，也可用環境變數 `PYTHON` 指定；只跑其中一邊用 `npx vitest run` 或 `npm run test:server`。
+
+選用的端對端測試（Playwright 驅動真實前端，自己起隔離後端與 vite，不碰正式站）：`node scripts/e2e/autosave.mjs`，需另外安裝 Playwright。
+
 ## 授權
 
 程式碼採 [MIT License](LICENSE)。研究／作品集用途。

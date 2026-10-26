@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import db
 from .routes import router
+from .security import SameOriginWriteGuard
 
 db.init_db()
 
@@ -24,13 +25,16 @@ app = FastAPI(title="GIS backend")
 # Dev uses the Vite proxy (same origin) and prod serves dist/ here (same origin),
 # so this mainly covers a directly-hit dev frontend on :5173.
 origins = os.environ.get("GIS_CORS_ORIGINS", "http://localhost:5173").split(",")
+cors_origins = [o.strip() for o in origins if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in origins if o.strip()],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Writes must come from this origin (or an explicitly CORS-allowed one).
+app.add_middleware(SameOriginWriteGuard, allowed_origins=cors_origins)
 
 app.include_router(router)
 

@@ -65,4 +65,8 @@ def verify_google_credential(credential: str) -> dict:
     )
     if info.get("iss") not in ("accounts.google.com", "https://accounts.google.com"):
         raise ValueError("invalid issuer")
+    # The email is stored and shown as the user's identity; only trust it if
+    # Google says the account actually owns it.
+    if info.get("email_verified") not in (True, "true"):
+        raise ValueError("email not verified")
     return info

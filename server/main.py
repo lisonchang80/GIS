@@ -19,7 +19,15 @@ from .security import BodySizeLimit, SameOriginWriteGuard
 
 db.init_db()
 
-app = FastAPI(title="GIS backend")
+# Interactive API docs only in dev: Swagger UI pulls scripts from a CDN and would
+# run them on the production origin, next to the session cookie.
+_dev = os.environ.get("GIS_DEV_LOGIN") == "1"
+app = FastAPI(
+    title="GIS backend",
+    docs_url="/docs" if _dev else None,
+    redoc_url="/redoc" if _dev else None,
+    openapi_url="/openapi.json" if _dev else None,
+)
 
 # CORS is only needed when the frontend is served from a different origin.
 # Dev uses the Vite proxy (same origin) and prod serves dist/ here (same origin),

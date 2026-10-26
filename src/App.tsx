@@ -254,6 +254,9 @@ export default function App() {
   const buildPayload = useCallback((): ProjectPayload => {
     const draw = drawRef.current;
     const map = mapRef.current;
+    // 地圖／繪圖工具要等 maplibre 'load'（底圖圖磚全到）才就緒；在那之前沿用載入時的
+    // drawings / mapView，否則第一次自動存檔就把它們存成空的（圖磚掛住時永遠不會 load）。
+    const pending = pendingProjectRef.current;
     return {
       basemapId,
       basemapVersionIndex,
@@ -261,10 +264,10 @@ export default function App() {
       projectName,
       layers,
       layerGroups,
-      drawings: draw?.getSnapshot() ?? [],
+      drawings: draw ? draw.getSnapshot() : (pending?.drawings ?? []),
       mapView: map
         ? { center: [map.getCenter().lng, map.getCenter().lat] as [number, number], zoom: map.getZoom() }
-        : undefined,
+        : pending?.mapView,
       colorCursor: colorCursor.current,
     };
   }, [basemapId, basemapVersionIndex, basemapOpacity, projectName, layers, layerGroups]);

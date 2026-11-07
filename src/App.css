@@ -727,6 +727,18 @@ body.resizing-x {
   font-size: 11px;
 }
 
+.save-status.save-error {
+  color: #fca5a5;
+  line-height: 1.45;
+}
+
+.contour-cap-hint {
+  color: #fdba74;
+  font-size: 11px;
+  line-height: 1.45;
+  margin: -2px 0 4px;
+}
+
 .loading-screen {
   display: flex;
   align-items: center;

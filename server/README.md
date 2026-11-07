@@ -44,11 +44,11 @@ Do NOT also put Cloudflare Access in front (it would double the login).
 | Method | Path               | Auth | Purpose                         |
 |--------|--------------------|------|---------------------------------|
 | POST   | /api/auth/google   | -    | verify Google ID token, set cookie |
-| POST   | /api/auth/logout   | -    | clear cookie                    |
+| POST   | /api/auth/logout   | -    | revoke all of the user's sessions (bumps `users.session_version`), clear cookie |
 | GET    | /api/me            | yes  | current user or 401             |
 | GET    | /api/projects      | yes  | list own projects               |
 | POST   | /api/projects      | yes  | create project                  |
-| GET/PUT/DELETE | /api/projects/{id} | yes | load (204 if empty) / save (name from `projectName`) / delete (owner only, else 404) |
+| GET/PUT/DELETE | /api/projects/{id} | yes | load (204 if empty; `ETag` = revision) / save (name from `projectName`; optional `If-Match` → 409 if another tab/device saved first) / delete (owner only, else 404) |
 
 ## Security behaviour
 
@@ -65,6 +65,13 @@ Do NOT also put Cloudflare Access in front (it would double the login).
 - Body limits: 64 KB for everything except whole-project saves
   (`PUT /api/projects/{id}`), which are capped by
   `GIS_MAX_PROJECT_MB` (default 50). Over the limit → 413.
+- Per-user quota: `GIS_MAX_PROJECTS` (default 50 projects) is checked on
+  create, `GIS_MAX_USER_MB` (default 500, all projects together, the saved
+  project's old data excluded) on save. Over the limit → 413 with a Chinese
+  `detail` message that the frontend shows.
+- Session cookies carry `users.session_version`; logout bumps it, so a copied
+  cookie (and the same account on other devices) stops working. Cookies from
+  before this change have no version and need a fresh login.
 - Google tokens must have `email_verified`; failed logins return a generic
   `invalid credential` (details only in the server log); a missing
   `GIS_GOOGLE_CLIENT_ID` returns 500 `login not configured`.

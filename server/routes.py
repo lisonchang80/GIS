@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from . import auth, db
+from . import auth, db, security
 
 router = APIRouter(prefix="/api")
 log = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ def _public_user(u):
 def set_session_cookie(response: Response, uid: int) -> None:
     response.set_cookie(
         auth.COOKIE_NAME,
-        auth.make_session(uid),
+        auth.make_session(uid, db.get_session_version(uid) or 0),
         max_age=auth.SESSION_MAX_AGE,
         httponly=True,
         samesite="lax",
@@ -60,12 +60,45 @@ async def read_project_payload(request: Request, default_name: str):
     return version, name, data_json
 
 
-def current_uid(request: Request) -> int:
+def session_uid(request: Request):
+    """uid of a valid, not-revoked session cookie, else None."""
     token = request.cookies.get(auth.COOKIE_NAME)
-    uid = auth.read_session(token) if token else None
+    session = auth.read_session(token) if token else None
+    if not session:
+        return None
+    uid, sv = session
+    # Logged out since this cookie was issued (or the user is gone): not a session.
+    if db.get_session_version(uid) != sv:
+        return None
+    return uid
+
+
+def current_uid(request: Request) -> int:
+    uid = session_uid(request)
     if not uid:
         raise HTTPException(status_code=401, detail="not authenticated")
     return uid
+
+
+def _etag(updated_at: str) -> str:
+    return f'"{updated_at}"'
+
+
+def _if_match(request: Request):
+    """Revision the client based its edit on (None = no precondition)."""
+    raw = request.headers.get("if-match")
+    if raw is None:
+        return None
+    value = raw.strip()
+    if value in ("", "*"):
+        return None
+    if value.startswith("W/"):
+        value = value[2:]
+    return value.strip().strip('"')
+
+
+def _mb(n: int) -> str:
+    return f"{n / (1024 * 1024):.1f}".removesuffix(".0")
 
 
 # ---- auth ----
@@ -101,7 +134,12 @@ def dev_login(response: Response):
 
 
 @router.post("/auth/logout")
-def auth_logout(response: Response):
+def auth_logout(request: Request, response: Response):
+    # Revoke server-side: a copy of this cookie (or the same account's cookie on
+    # another device) must not keep working for the rest of its 30 days.
+    uid = session_uid(request)
+    if uid:
+        db.bump_session_version(uid)
     # Same attributes as when set: browsers ignore a __Host- Set-Cookie without Secure.
     response.delete_cookie(
         auth.COOKIE_NAME, path="/", secure=COOKIE_SECURE, httponly=True, samesite="lax"
@@ -129,7 +167,14 @@ def list_projects_route(uid: int = Depends(current_uid)):
 
 @router.post("/projects")
 def create_project_route(body: CreateProjectBody, uid: int = Depends(current_uid)):
-    return db.create_project(uid, body.name or "未命名專案")
+    limit = security.max_projects()
+    try:
+        return db.create_project(uid, body.name or "未命名專案", max_projects=limit)
+    except db.QuotaExceeded:
+        raise HTTPException(
+            status_code=413,
+            detail=f"專案數量已達上限（每位使用者最多 {limit} 個），請先刪除不需要的專案再新增。",
+        )
 
 
 @router.get("/projects/{pid}")
@@ -137,18 +182,46 @@ def get_project_by_id_route(pid: int, uid: int = Depends(current_uid)):
     row = db.get_project_by_id(uid, pid)
     if not row:
         raise HTTPException(status_code=404, detail="not found")
+    # ETag = updated_at: the client sends it back as If-Match when saving.
+    headers = {"ETag": _etag(row["updated_at"]), "Cache-Control": "no-store"}
     if not row["data"]:
-        return Response(status_code=204)
-    return JSONResponse(content=json.loads(row["data"]))
+        return Response(status_code=204, headers=headers)
+    # Stored text is already validated JSON (read_project_payload): send it as-is
+    # instead of parsing + re-serializing a multi-MB document on every load.
+    return Response(content=row["data"], media_type="application/json", headers=headers)
 
 
 @router.put("/projects/{pid}")
 async def put_project_by_id_route(pid: int, request: Request, uid: int = Depends(current_uid)):
     version, name, data_json = await read_project_payload(request, "未命名專案")
-    ok, ts = db.update_project_by_id(uid, pid, version, data_json, name)
-    if not ok:
+    limit = security.max_user_bytes()
+    try:
+        ts = db.update_project_by_id(
+            uid,
+            pid,
+            version,
+            data_json,
+            name,
+            expected_updated_at=_if_match(request),
+            max_user_bytes=limit,
+        )
+    except db.ProjectNotFound:
         raise HTTPException(status_code=404, detail="not found")
-    return {"savedAt": ts}
+    except db.RevisionConflict:
+        raise HTTPException(
+            status_code=409,
+            detail="此專案已在其他分頁或裝置更新，請重新載入。",
+        )
+    except db.QuotaExceeded as e:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"儲存空間已達上限：每位使用者所有專案合計最多 {_mb(limit)} MB"
+                f"（其他專案已用 {_mb(e.used)} MB，這次存檔 {_mb(e.requested)} MB）。"
+                "請刪除不需要的專案或圖層後再試。"
+            ),
+        )
+    return JSONResponse({"savedAt": ts}, headers={"ETag": _etag(ts)})
 
 
 @router.delete("/projects/{pid}")

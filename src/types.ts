@@ -81,6 +81,9 @@ export interface VectorLayer {
   soilConcTabs?: SoilConcTab[];
   soilSurveyTabs?: SoilSurveyTab[];
   exceedance?: ExceedanceConfig;
+  // 等值線太密而被自動放大級距時的標記（衍生資訊：每次重建重算，不會回寫 waterLevel.lines）。
+  // key＝物質 id；單一來源（等水位線、單一物質）用 '*'。
+  contourCap?: Record<string, ContourCapInfo>;
   waterLevel?: {
     dates: string[];
     activeDate: string;
@@ -103,6 +106,13 @@ export interface VectorLayer {
     dateLabel?: WaterLevelDateLabel;
     legend?: WaterLevelLegend;
   };
+}
+
+export interface ContourCapInfo {
+  requestedInterval: number; // 使用者設定的主線間距
+  effectiveInterval: number; // 實際畫出來的主線間距（主線最多 200 條）
+  requestedMinorDivisions?: number;
+  effectiveMinorDivisions?: number; // 副線最多 800 條
 }
 
 export interface WaterLevelLegend {

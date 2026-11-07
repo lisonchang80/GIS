@@ -4,6 +4,8 @@ import type { ProjectMeta } from './persistence';
 
 interface Props {
   savedAt: Date | null;
+  // 最近一次存檔失敗的原因（409 衝突、413 超過上限、斷線…）；成功存檔後清掉
+  saveError?: string | null;
   projects: ProjectMeta[];
   currentProjectId: number | null;
   onSwitch: (id: number) => void;
@@ -197,11 +199,18 @@ export function ProjectBar(p: Props) {
           if (fileRef.current) fileRef.current.value = '';
         }}
       />
-      <p className="hint save-status">
-        {p.savedAt
-          ? `✓ 已儲存於 ${p.savedAt.toLocaleTimeString('zh-TW', { hour12: false })}`
-          : '尚未儲存'}
-      </p>
+      {p.saveError ? (
+        <p className="hint save-status save-error" role="alert">
+          ⚠ {p.saveError}
+          {p.savedAt && `（上次成功儲存於 ${p.savedAt.toLocaleTimeString('zh-TW', { hour12: false })}）`}
+        </p>
+      ) : (
+        <p className="hint save-status">
+          {p.savedAt
+            ? `✓ 已儲存於 ${p.savedAt.toLocaleTimeString('zh-TW', { hour12: false })}`
+            : '尚未儲存'}
+        </p>
+      )}
     </CollapsibleSection>
   );
 }

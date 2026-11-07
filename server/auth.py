@@ -1,4 +1,4 @@
-"""Google ID-token verification + stateless signed session cookie.
+"""Google ID-token verification + signed session cookie (revocable via users.session_version).
 
 We use the lightest OAuth flow: the frontend's "Sign in with Google" button
 hands us a Google-signed ID token (JWT). We verify its signature / audience /
@@ -52,16 +52,28 @@ SESSION_MAX_AGE = 60 * 60 * 24 * 30  # 30 days
 _serializer = URLSafeTimedSerializer(SESSION_SECRET, salt="gis-session")
 
 
-def make_session(uid: int) -> str:
-    return _serializer.dumps({"uid": uid})
+def make_session(uid: int, session_version: int) -> str:
+    # sv = users.session_version at login. Logout bumps it server-side, so every
+    # cookie issued before (including a copied one) stops working.
+    return _serializer.dumps({"uid": uid, "sv": session_version})
 
 
 def read_session(token: str):
+    """Signature + expiry check only -> (uid, session_version), or None.
+
+    The caller must still compare session_version with the stored one
+    (routes.session_uid). Old-format cookies without "sv" are rejected.
+    """
     try:
         data = _serializer.loads(token, max_age=SESSION_MAX_AGE)
-        return data.get("uid")
     except (BadSignature, SignatureExpired):
         return None
+    if not isinstance(data, dict):
+        return None
+    uid, sv = data.get("uid"), data.get("sv")
+    if type(uid) is not int or type(sv) is not int:
+        return None
+    return uid, sv
 
 
 # Google's signing certs change rarely and are served with Cache-Control max-age;

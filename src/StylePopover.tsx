@@ -12,7 +12,7 @@ import type {
   WaterLevelHeightLabel,
   WaterLevelLines,
 } from './types';
-import { makeGwConcDefaultsForSub } from './contour';
+import { MAX_MAJOR_LINES, MAX_MINOR_LINES, makeGwConcDefaultsForSub } from './contour';
 import { ShapeSwatch } from './ShapeSwatch';
 import { POINT_SHAPES, SHAPE_LABELS } from './pointShapes';
 
@@ -218,6 +218,8 @@ export function StylePopover({ layer, sourceLayer, onClose, onUpdate }: Props) {
     ...DEFAULT_LINES_UI,
     ...(effectiveLines ?? {}),
   };
+  // 線太密時重建程式自動放大的級距（只影響畫出來的線，不改上面的設定值）
+  const lineCap = layer.contourCap?.[isMultiSub ? (activeSubId ?? '') : '*'];
 
   const arrowsCfg: Required<WaterLevelArrows> = {
     ...DEFAULT_ARROWS_UI,
@@ -701,6 +703,17 @@ export function StylePopover({ layer, sourceLayer, onClose, onUpdate }: Props) {
                 />
                 <span className="popover-value">m</span>
               </div>
+              {lineCap && (
+                <p className="contour-cap-hint" role="status">
+                  {lineCap.effectiveInterval !== lineCap.requestedInterval &&
+                    `主線太密（超過 ${MAX_MAJOR_LINES} 條），地圖上已自動改用間距 ${lineCap.effectiveInterval}；` +
+                      `你設定的 ${lineCap.requestedInterval} 保留不變。`}
+                  {lineCap.effectiveMinorDivisions !== undefined &&
+                    `副線太密（超過 ${MAX_MINOR_LINES} 條），已改為 ${lineCap.effectiveMinorDivisions} 等分` +
+                      `（設定為 ${lineCap.requestedMinorDivisions} 等分）。`}
+                  {'（線太多會讓專案過大、存不進雲端。）'}
+                </p>
+              )}
 
               <div className="popover-row">
                 <label className="popover-label">

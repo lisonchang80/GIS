@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { Map as MLMap } from 'maplibre-gl';
 import type { TerraDraw } from 'terra-draw';
 import type { Feature, FeatureCollection } from 'geojson';
@@ -20,25 +20,40 @@ import { BASEMAPS, basemapDefaultVersionIndex } from './basemaps';
 import type { BaseMapId, LayerGroup, VectorLayer } from './types';
 import { SOIL_BATCH_KEY } from './types';
 import { detectKind, ensureNames, fileToGeoJSON, geometryBounds } from './importers';
-import { syncAllContours, syncContoursForSource, syncSingleContour } from './contour';
-import { syncAllExceedance, syncExceedanceForSource } from './exceedance';
+import { syncContoursForSource, syncSingleContour } from './contour';
+import { syncExceedanceForSource } from './exceedance';
 import {
+  ApiError,
   createProject,
   deleteProject,
   downloadProject,
   importProjectFile,
+  isConflict,
+  isUnauthorized,
   listProjects,
   loadProject,
-  saveProject,
+  revisionOf,
+  saveErrorMessage,
   type ProjectMeta,
   type ProjectPayload,
-  type ProjectState,
 } from './persistence';
+import { ProjectSaver } from './projectSaver';
+import {
+  DEFAULT_BASEMAP,
+  buildProjectPayload,
+  prepareProject,
+  sameMapView,
+  type PreparedProject,
+} from './projectData';
+import { useAuth } from './authContext';
 import './App.css';
 
 const PALETTE = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
 const CURRENT_PROJECT_KEY = 'gis-current-project-id';
-const DEFAULT_BASEMAP: BaseMapId = 'satellite-google';
+// 內容（圖層、繪圖、底圖、名稱）改了：0.5 s 後存。只有地圖視角變了：5 s 後才存
+// （每次存檔都是整包專案，平移地圖不該每停一下就上傳數 MB），離開頁面時立即存。
+const CONTENT_SAVE_DELAY_MS = 500;
+const VIEW_SAVE_DELAY_MS = 5000;
 const TERRA_DRAW_INTERNAL_KEYS = new Set(['mode', 'selected', 'midPoint', 'midPointFeature']);
 
 function computeContourKey(wl: VectorLayer['waterLevel']): string {
@@ -61,6 +76,10 @@ function computeContourKey(wl: VectorLayer['waterLevel']): string {
 function loadFailedMessage(name: string | undefined, e: unknown, stayed = false): string {
   const head = `無法載入專案「${name || '未命名專案'}」（${(e as Error).message}）。`;
   return head + (stayed ? '仍停留在目前的專案。' : '為避免覆蓋雲端資料，自動儲存已暫停，請重新整理頁面再試。');
+}
+
+function listFailedMessage(e: unknown): string {
+  return `無法讀取專案清單（${(e as Error).message}）。為避免建立多餘的空白專案，自動儲存已暫停，請重新整理頁面再試。`;
 }
 
 function cleanDrawProps(props: Record<string, unknown> | null | undefined): Record<string, unknown> {
@@ -120,54 +139,35 @@ export default function App() {
   const drawRef = useRef<TerraDraw | null>(null);
   const measureRef = useRef<MeasureController | null>(null);
   const colorCursor = useRef(0);
-  const pendingProjectRef = useRef<ProjectState | null>(null);
+  const pendingProjectRef = useRef<PreparedProject | null>(null);
   const mapViewAppliedRef = useRef(false);
   const drawingsAppliedRef = useRef(false);
 
+  const auth = useAuth();
+  const onSessionExpiredRef = useRef(auth?.onSessionExpired);
+  useLayoutEffect(() => {
+    onSessionExpiredRef.current = auth?.onSessionExpired;
+  });
+  const sessionExpired = useCallback(() => onSessionExpiredRef.current?.(), []);
+
+  // 存檔：同一時間只送一個 PUT，每個都帶上一次成功存檔（或載入）時的版本號（If-Match）。
+  const [saver] = useState(() => new ProjectSaver());
+  const [saveError, setSaveError] = useState<string | null>(null);
+  // 收到 409（別的分頁／裝置已更新）的專案：停止自動存檔，直到重新載入它
+  const [conflictProjectId, setConflictProjectId] = useState<number | null>(null);
+  const saveTimerRef = useRef<{ handle: ReturnType<typeof setTimeout>; kind: 'content' | 'view' } | null>(null);
+  const lastSavedViewRef = useRef<PreparedProject['mapView']>(undefined);
+  // 剛載入專案的那一次 render 不是使用者的修改，不必存（否則另一個分頁會因此誤報衝突）
+  const skipNextContentSaveRef = useRef(false);
+  // 載入或上次成功存檔之後有沒有新的修改（離開專案前只在有修改時才存）
+  const unsavedRef = useRef(false);
+
   const basemap = BASEMAPS.find((b) => b.id === basemapId) ?? BASEMAPS[0];
 
-  useEffect(() => {
-    (async () => {
-      let list = await listProjects();
-      if (list.length === 0) {
-        const created = await createProject('未命名專案');
-        if (created) list = [created];
-      }
-      let chosenId: number | null = null;
-      let project: ProjectState | null = null;
-      if (list.length > 0) {
-        const savedId = Number(localStorage.getItem(CURRENT_PROJECT_KEY));
-        const chosen = list.find((p) => p.id === savedId) ?? list[0];
-        try {
-          project = await loadProject(chosen.id);
-          chosenId = chosen.id;
-        } catch (e) {
-          // 不設 currentProjectId → 自動存檔不會啟動，雲端專案不會被空白畫面覆蓋
-          console.warn('loadProject failed', e);
-          setError(loadFailedMessage(chosen.name, e));
-        }
-      }
-      if (project) {
-        setBasemapId(project.basemapId);
-        const base = BASEMAPS.find((b) => b.id === project.basemapId);
-        const defaultIdx = base ? basemapDefaultVersionIndex(base) : 0;
-        setBasemapVersionIndex(project.basemapVersionIndex ?? defaultIdx);
-        setBasemapOpacity(project.basemapOpacity ?? 1);
-        if (project.projectName) setProjectName(project.projectName);
-        setLayers(syncAllExceedance(syncAllContours(project.layers.map((l) => ({ ...l, data: ensureNames(l.data) })))));
-        setLayerGroups(project.layerGroups ?? []);
-        if (typeof project.colorCursor === 'number') colorCursor.current = project.colorCursor;
-        pendingProjectRef.current = project;
-        setSavedAt(project.savedAt ? new Date(project.savedAt) : null);
-      } else {
-        const base = BASEMAPS.find((b) => b.id === DEFAULT_BASEMAP);
-        if (base) setBasemapVersionIndex(basemapDefaultVersionIndex(base));
-      }
-      setProjects(list);
-      setCurrentProjectId(chosenId);
-      if (chosenId != null) localStorage.setItem(CURRENT_PROJECT_KEY, String(chosenId));
-      setInitialized(true);
-    })();
+  const cancelPendingSave = useCallback(() => {
+    const t = saveTimerRef.current;
+    if (t) clearTimeout(t.handle);
+    saveTimerRef.current = null;
   }, []);
 
   const applyPendingMapView = useCallback(() => {
@@ -181,42 +181,41 @@ export default function App() {
   const applyPendingDrawings = useCallback(() => {
     const pending = pendingProjectRef.current;
     const draw = drawRef.current;
-    if (!pending?.drawings || !draw || drawingsAppliedRef.current) return;
+    if (!pending || pending.drawings.length === 0 || !draw || drawingsAppliedRef.current) return;
     try {
       draw.addFeatures(pending.drawings);
     } catch (e) {
       console.warn('restore drawings failed', e);
     }
     drawingsAppliedRef.current = true;
-    setDrawCount(draw.getSnapshot().length);
+    const n = draw.getSnapshot().length;
+    // 還原載入時的繪圖不算修改：drawCount 若因此改變，那次 render 不觸發存檔
+    setDrawCount((prev) => {
+      if (prev !== n) skipNextContentSaveRef.current = true;
+      return n;
+    });
   }, []);
 
-  // Apply a loaded (or null = empty) project to all state. Used for project
-  // switch / new / import / clear — refs are ready by then, so drawings and
-  // map view are applied directly (the mount path uses the pending-ref dance).
-  const applyProject = useCallback((project: ProjectState | null) => {
-    if (project) {
-      setBasemapId(project.basemapId);
-      const base = BASEMAPS.find((b) => b.id === project.basemapId);
-      const defaultIdx = base ? basemapDefaultVersionIndex(base) : 0;
-      setBasemapVersionIndex(project.basemapVersionIndex ?? defaultIdx);
-      setBasemapOpacity(project.basemapOpacity ?? 1);
-      setProjectName(project.projectName ?? '未命名專案');
-      setLayers(syncAllExceedance(syncAllContours(project.layers.map((l) => ({ ...l, data: ensureNames(l.data) })))));
-      setLayerGroups(project.layerGroups ?? []);
-      colorCursor.current = typeof project.colorCursor === 'number' ? project.colorCursor : 0;
-      setSavedAt(project.savedAt ? new Date(project.savedAt) : null);
-    } else {
-      setBasemapId(DEFAULT_BASEMAP);
-      const base = BASEMAPS.find((b) => b.id === DEFAULT_BASEMAP);
-      setBasemapVersionIndex(base ? basemapDefaultVersionIndex(base) : 0);
-      setBasemapOpacity(1);
-      setProjectName('未命名專案');
-      setLayers([]);
-      setLayerGroups([]);
-      colorCursor.current = 0;
-      setSavedAt(null);
+  // Apply a prepared project (see prepareProject: everything that can throw has
+  // already run, so this only sets state). `loaded` = it is what the server has
+  // (switch / bootstrap / new): don't save it straight back.
+  const applyProject = useCallback((p: PreparedProject, opts: { loaded?: boolean } = {}) => {
+    if (opts.loaded) {
+      cancelPendingSave();
+      skipNextContentSaveRef.current = true;
+      lastSavedViewRef.current = p.mapView;
+      unsavedRef.current = false;
+      setConflictProjectId(null);
+      setSaveError(null);
     }
+    setBasemapId(p.basemapId);
+    setBasemapVersionIndex(p.basemapVersionIndex);
+    setBasemapOpacity(p.basemapOpacity);
+    setProjectName(p.projectName);
+    setLayers(p.layers);
+    setLayerGroups(p.layerGroups);
+    colorCursor.current = p.colorCursor;
+    setSavedAt(p.savedAt);
     setAttributesLayerId(null);
     setStylePopoverLayerId(null);
     setPickingCoords(null);
@@ -224,7 +223,7 @@ export default function App() {
     setDrawMode('static');
     measureRef.current?.deactivate();
     setMeasureMode(null);
-    pendingProjectRef.current = project;
+    pendingProjectRef.current = p;
     mapViewAppliedRef.current = false;
     drawingsAppliedRef.current = false;
     const draw = drawRef.current;
@@ -234,9 +233,9 @@ export default function App() {
       } catch {
         /* noop */
       }
-      if (project?.drawings && project.drawings.length > 0) {
+      if (p.drawings.length > 0) {
         try {
-          draw.addFeatures(project.drawings);
+          draw.addFeatures(p.drawings);
         } catch (e) {
           console.warn('apply drawings failed', e);
         }
@@ -245,32 +244,185 @@ export default function App() {
       setDrawCount(draw.getSnapshot().length);
     }
     const map = mapRef.current;
-    if (map && project?.mapView) {
-      map.jumpTo({ center: project.mapView.center, zoom: project.mapView.zoom });
+    if (map && p.mapView) {
+      map.jumpTo({ center: p.mapView.center, zoom: p.mapView.zoom });
       mapViewAppliedRef.current = true;
     }
+  }, [cancelPendingSave]);
+
+  // 操作途中收到 401（登入失效）：畫面上還有沒存進雲端的修改時，不回登入畫面
+  // （LoginGate 會卸掉整個 App，修改就沒了），改成留在原畫面提示先匯出備份；
+  // 沒有未存的修改才回登入畫面。
+  // 畫面上有沒有還沒存進雲端的東西：內容修改／存檔失敗，或排著的視角存檔且視角真的變了
+  const hasUnsavedChanges = useCallback((): boolean => {
+    if (unsavedRef.current) return true;
+    const pending = saveTimerRef.current;
+    if (!pending) return false;
+    if (pending.kind === 'content') return true;
+    const map = mapRef.current;
+    if (!map) return false;
+    const view = { center: [map.getCenter().lng, map.getCenter().lat] as [number, number], zoom: map.getZoom() };
+    return !sameMapView(view, lastSavedViewRef.current);
   }, []);
+
+  const onUnauthorized = useCallback(() => {
+    if (hasUnsavedChanges()) {
+      const message = saveErrorMessage(new ApiError(401));
+      setSaveError(message);
+      setError(message);
+      return;
+    }
+    sessionExpired();
+  }, [sessionExpired, hasUnsavedChanges]);
+
+  const refreshProjects = useCallback(async () => {
+    try {
+      setProjects(await listProjects());
+    } catch (e) {
+      if (isUnauthorized(e)) {
+        onUnauthorized();
+        return;
+      }
+      console.warn('listProjects failed', e);
+      setError(`無法更新專案清單（${(e as Error).message}），顯示的是先前的清單。`);
+    }
+  }, [onUnauthorized]);
+
+  useEffect(() => {
+    (async () => {
+      let list: ProjectMeta[] = [];
+      let chosen: ProjectMeta | null = null;
+      try {
+        list = await listProjects();
+        // 只有伺服器確實回了空清單（200 []）才自動建一個；讀取失敗會在上面就丟例外
+        if (list.length === 0) list = [await createProject('未命名專案')];
+        const savedId = Number(localStorage.getItem(CURRENT_PROJECT_KEY));
+        chosen = list.find((p) => p.id === savedId) ?? list[0];
+        const loaded = await loadProject(chosen.id);
+        // 全部準備好（可能丟例外）才開始改狀態
+        const prepared = prepareProject(loaded.project);
+        saver.setRevision(chosen.id, loaded.revision);
+        applyProject(prepared, { loaded: true });
+        setCurrentProjectId(chosen.id);
+        localStorage.setItem(CURRENT_PROJECT_KEY, String(chosen.id));
+      } catch (e) {
+        if (isUnauthorized(e)) {
+          sessionExpired();
+          return;
+        }
+        // currentProjectId 維持 null → 自動存檔不會啟動，雲端專案不會被空白畫面覆蓋
+        console.warn('initial project load failed', e);
+        applyProject(prepareProject(null));
+        setError(chosen ? loadFailedMessage(chosen.name, e) : listFailedMessage(e));
+      } finally {
+        setProjects(list);
+        setInitialized(true);
+      }
+    })();
+  }, [applyProject, saver, sessionExpired]);
 
   const buildPayload = useCallback((): ProjectPayload => {
     const draw = drawRef.current;
     const map = mapRef.current;
-    // 地圖／繪圖工具要等 maplibre 'load'（底圖圖磚全到）才就緒；在那之前沿用載入時的
-    // drawings / mapView，否則第一次自動存檔就把它們存成空的（圖磚掛住時永遠不會 load）。
-    const pending = pendingProjectRef.current;
-    return {
-      basemapId,
-      basemapVersionIndex,
-      basemapOpacity,
-      projectName,
-      layers,
-      layerGroups,
-      drawings: draw ? draw.getSnapshot() : (pending?.drawings ?? []),
-      mapView: map
-        ? { center: [map.getCenter().lng, map.getCenter().lat] as [number, number], zoom: map.getZoom() }
-        : pending?.mapView,
-      colorCursor: colorCursor.current,
-    };
+    return buildProjectPayload(
+      { basemapId, basemapVersionIndex, basemapOpacity, projectName, layers, layerGroups, colorCursor: colorCursor.current },
+      {
+        drawings: draw ? draw.getSnapshot() : null,
+        mapView: map
+          ? { center: [map.getCenter().lng, map.getCenter().lat] as [number, number], zoom: map.getZoom() }
+          : null,
+      },
+      pendingProjectRef.current,
+    );
   }, [basemapId, basemapVersionIndex, basemapOpacity, projectName, layers, layerGroups]);
+
+  // Latest values for the save timer / page-hide handler, which outlive renders.
+  const buildPayloadRef = useRef(buildPayload);
+  const currentProjectIdRef = useRef(currentProjectId);
+  const conflictProjectIdRef = useRef(conflictProjectId);
+  const initializedRef = useRef(initialized);
+  useLayoutEffect(() => {
+    buildPayloadRef.current = buildPayload;
+    currentProjectIdRef.current = currentProjectId;
+    conflictProjectIdRef.current = conflictProjectId;
+    initializedRef.current = initialized;
+  });
+
+  // Save now through the queue. Never throws: failures are put on screen.
+  const saveNow = useCallback(
+    async (
+      pid: number,
+      payload: ProjectPayload,
+      opts: { keepalive?: boolean } = {},
+    ): Promise<{ ok: true } | { ok: false; message: string; unauthorized: boolean }> => {
+      try {
+        await saver.save(pid, payload, opts);
+      } catch (caught) {
+        console.warn('saveProject failed', caught);
+        let e = caught;
+        if (!(e instanceof ApiError) || e.status === 0 || e.status >= 500) {
+          // 伺服器在收完整包專案前就回 401（登入失效）時，瀏覽器常只看到「連線被重設」，
+          // 中間經過 proxy（vite、cloudflared）則常變成 502：再問一次 /api/me 才知道真正原因
+          try {
+            if ((await fetch('/api/me', { credentials: 'include' })).status === 401) e = new ApiError(401);
+          } catch {
+            /* 真的斷線 */
+          }
+        }
+        const message = saveErrorMessage(e);
+        if (pid === currentProjectIdRef.current) unsavedRef.current = true; // 包括只動視角的那次
+        if (isConflict(e)) setConflictProjectId(pid);
+        setSaveError(message);
+        // 衝突、超過上限、登入失效：跳出提示（斷線只在專案列顯示，下次修改會再試）
+        if (e instanceof ApiError) setError(message);
+        return { ok: false, message, unauthorized: isUnauthorized(e) };
+      }
+      if (pid === currentProjectIdRef.current) {
+        setSavedAt(new Date());
+        setSaveError(null);
+        lastSavedViewRef.current = payload.mapView;
+        // 存檔途中又有修改的話，計時器會再排一次存檔，仍算未儲存
+        if (!saveTimerRef.current) unsavedRef.current = false;
+      }
+      setProjects((prev) => prev.map((p) => (p.id === pid ? { ...p, name: payload.projectName || p.name } : p)));
+      return { ok: true };
+    },
+    [saver],
+  );
+
+  const flushSave = useCallback(
+    (kind: 'content' | 'view', opts: { keepalive?: boolean } = {}) => {
+      cancelPendingSave();
+      const pid = currentProjectIdRef.current;
+      if (!initializedRef.current || pid == null || conflictProjectIdRef.current === pid) return;
+      const payload = buildPayloadRef.current();
+      // 只有視角變動、而且其實沒移動（視窗縮放、jumpTo 到存好的視角）：不上傳
+      if (kind === 'view' && sameMapView(payload.mapView, lastSavedViewRef.current)) return;
+      void saveNow(pid, payload, opts);
+    },
+    [cancelPendingSave, saveNow],
+  );
+
+  const scheduleSave = useCallback(
+    (kind: 'content' | 'view') => {
+      const pending = saveTimerRef.current;
+      // 已經排了 0.5 s 後的整包存檔（會順便帶上目前視角）：不必再排較晚的
+      if (kind === 'view' && pending?.kind === 'content') return;
+      if (pending) clearTimeout(pending.handle);
+      const handle = setTimeout(
+        () => {
+          saveTimerRef.current = null;
+          flushSave(kind);
+        },
+        kind === 'content' ? CONTENT_SAVE_DELAY_MS : VIEW_SAVE_DELAY_MS,
+      );
+      saveTimerRef.current = { handle, kind };
+      // 內容修改才標成未儲存；只動視角時，排著的計時器本身就代表「還沒存」，
+      // 計時器到了卻發現視角其實沒變（例如載入後的 jumpTo）就沒有東西要存
+      if (kind === 'content') unsavedRef.current = true;
+    },
+    [flushSave],
+  );
 
   const handleMapReady = useCallback(
     (map: MLMap) => {
@@ -387,32 +539,40 @@ export default function App() {
     return (l?.soilSurveyTabs ?? []).flatMap((t) => t.obstacles ?? []);
   }, [attributesLayerId, layers]);
 
+  // 內容變了（buildPayload 依賴的狀態、繪圖數）：0.5 s 後整包存檔
   useEffect(() => {
     if (!initialized || currentProjectId == null) return;
-    const pid = currentProjectId;
-    const handle = setTimeout(() => {
-      saveProject(pid, buildPayload())
-        .then(() => {
-          setSavedAt(new Date());
-          setProjects((prev) =>
-            prev.map((p) => (p.id === pid ? { ...p, name: projectName || p.name } : p)),
-          );
-        })
-        .catch((e) => console.warn('saveProject failed', e));
-    }, 500);
-    return () => clearTimeout(handle);
-  }, [
-    initialized,
-    currentProjectId,
-    basemapId,
-    basemapVersionIndex,
-    basemapOpacity,
-    projectName,
-    layers,
-    drawCount,
-    mapMoveTick,
-    buildPayload,
-  ]);
+    if (skipNextContentSaveRef.current) {
+      skipNextContentSaveRef.current = false;
+      return;
+    }
+    scheduleSave('content');
+  }, [initialized, currentProjectId, buildPayload, drawCount, scheduleSave]);
+
+  // 只有地圖視角變了（moveend，也包括視窗縮放）：等 5 s 沒再動才存
+  useEffect(() => {
+    if (mapMoveTick === 0) return;
+    scheduleSave('view');
+  }, [mapMoveTick, scheduleSave]);
+
+  // 切到別的分頁、關掉或離開頁面：還沒送出的存檔立即送出
+  useEffect(() => {
+    const flushPending = () => {
+      const pending = saveTimerRef.current;
+      if (pending) flushSave(pending.kind, { keepalive: true });
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flushPending();
+    };
+    window.addEventListener('pagehide', flushPending);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('pagehide', flushPending);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [flushSave]);
+
+  useEffect(() => cancelPendingSave, [cancelPendingSave]);
 
   const handleBasemapChange = useCallback((id: BaseMapId) => {
     setBasemapId(id);
@@ -735,13 +895,15 @@ export default function App() {
   const handleImportProject = async (file: File) => {
     setError(null);
     try {
-      const project = await importProjectFile(file);
+      // 先整份準備好（壞檔在這裡就丟例外），確認後才改狀態：否則底圖／名稱先套用、
+      // 圖層沒換，自動存檔會把目前專案改名
+      const prepared = prepareProject(await importProjectFile(file));
       if (
         !window.confirm(
           `匯入會取代目前專案「${projectName || '未命名專案'}」的全部內容（圖層、繪圖、底圖與名稱），確定？`,
         )
       ) return;
-      applyProject(project);
+      applyProject(prepared);
     } catch (e) {
       setError(`匯入失敗: ${(e as Error).message}`);
     }
@@ -909,114 +1071,180 @@ export default function App() {
 
   const handleClearProject = () => {
     if (!window.confirm('確定清空目前專案的內容嗎？\n圖層與繪製會被清除（專案本身會保留）。')) return;
-    applyProject(null);
+    applyProject(prepareProject(null));
   };
+
+  // 離開目前專案（切換／新增）前先存檔。存不進去（超過上限、斷線、登入失效）時
+  // 讓使用者決定：留下來（預設），或放棄未儲存的變更繼續。衝突中的專案不存
+  // （伺服器上已是別處較新的版本，使用者也已被提示要重新載入）。沒有修改就不存
+  // （白白換掉版本號，會讓同時開著這個專案的其他分頁誤報衝突）。
+  const saveBeforeLeaving = useCallback(async (): Promise<boolean> => {
+    const pid = currentProjectId;
+    const unsaved = hasUnsavedChanges();
+    cancelPendingSave();
+    if (pid == null || conflictProjectId === pid || !unsaved) return true;
+    const r = await saveNow(pid, buildPayload());
+    if (r.ok) return true;
+    // 登入失效：離開也只會在下一步 401，而回登入畫面會丟掉這些修改 → 留在原畫面
+    if (r.unauthorized) return false;
+    return window.confirm(`${r.message}\n\n仍要離開目前的專案，放棄還沒儲存的變更嗎？`);
+  }, [currentProjectId, conflictProjectId, hasUnsavedChanges, cancelPendingSave, saveNow, buildPayload]);
 
   const handleSwitchProject = useCallback(
     async (id: number) => {
       if (id === currentProjectId) return;
-      if (currentProjectId != null) {
-        try {
-          await saveProject(currentProjectId, buildPayload());
-        } catch (e) {
-          console.warn('save before switch failed', e);
-        }
-      }
-      // 先載入、再於同一個 tick 切換 id 與內容：若先 setCurrentProjectId，載入期間
-      // 自動存檔（500ms）會把「舊專案的內容」寫進新專案的 id。
-      let project: ProjectState | null;
+      if (!(await saveBeforeLeaving())) return;
+      // 先載入並準備好（可能丟例外），再於同一個 tick 切換 id 與內容：若先
+      // setCurrentProjectId，載入期間的自動存檔會把「舊專案的內容」寫進新專案的 id；
+      // 若準備（重建衍生圖層）在 setState 之後才丟例外，也會留下同樣的混合狀態。
+      let loaded: Awaited<ReturnType<typeof loadProject>>;
+      let prepared: PreparedProject;
       try {
-        project = await loadProject(id);
+        loaded = await loadProject(id);
+        prepared = prepareProject(loaded.project);
       } catch (e) {
+        if (isUnauthorized(e)) {
+          onUnauthorized();
+          return;
+        }
         console.warn('loadProject failed', e);
         setError(loadFailedMessage(projects.find((p) => p.id === id)?.name, e, currentProjectId != null));
         return; // 留在目前的專案
       }
       setError(null);
       localStorage.setItem(CURRENT_PROJECT_KEY, String(id));
+      saver.setRevision(id, loaded.revision);
       setCurrentProjectId(id);
-      applyProject(project);
-      setProjects(await listProjects());
+      applyProject(prepared, { loaded: true });
+      await refreshProjects();
     },
-    [currentProjectId, buildPayload, applyProject, projects],
+    [currentProjectId, saveBeforeLeaving, applyProject, projects, saver, onUnauthorized, refreshProjects],
   );
 
   const handleNewProject = useCallback(async (name: string) => {
-    if (currentProjectId != null) {
-      try {
-        await saveProject(currentProjectId, buildPayload());
-      } catch (e) {
-        console.warn('save before new failed', e);
+    if (!(await saveBeforeLeaving())) return;
+    let created: ProjectMeta;
+    try {
+      created = await createProject(name);
+    } catch (e) {
+      if (isUnauthorized(e)) {
+        onUnauthorized();
+        return;
       }
+      console.warn('createProject failed', e);
+      setError(`無法新增專案：${saveErrorMessage(e)}`);
+      return;
     }
-    const created = await createProject(name);
-    if (!created) return;
+    setError(null);
     localStorage.setItem(CURRENT_PROJECT_KEY, String(created.id));
+    saver.setRevision(created.id, revisionOf(created));
     setCurrentProjectId(created.id);
-    applyProject(null);
+    applyProject(prepareProject(null), { loaded: true });
     setProjectName(name);
-    setProjects(await listProjects());
-  }, [currentProjectId, buildPayload, applyProject]);
+    await refreshProjects();
+  }, [saveBeforeLeaving, applyProject, saver, onUnauthorized, refreshProjects]);
 
   // "Save As": clone the CURRENT content into a brand-new project under a new
   // name and switch to the copy. The original keeps its own name + content.
+  // (Also the way out of a conflict: keep this tab's version as a new project.)
   const handleSaveAsProject = useCallback(async (name: string) => {
-    if (currentProjectId != null) {
-      try {
-        await saveProject(currentProjectId, buildPayload());
-      } catch (e) {
-        console.warn('save before saveAs failed', e);
-      }
+    const unsaved = hasUnsavedChanges();
+    cancelPendingSave();
+    if (currentProjectId != null && conflictProjectId !== currentProjectId && unsaved) {
+      // 原專案存不進去也照樣另存：內容會在新專案裡。登入失效例外：另存一樣會 401，
+      // 留在原畫面（saveNow 已提示先匯出備份），不回登入畫面丟掉修改
+      const r = await saveNow(currentProjectId, buildPayload());
+      if (!r.ok && r.unauthorized) return;
     }
-    const created = await createProject(name);
-    if (!created) return;
+    let created: ProjectMeta;
     try {
-      await saveProject(created.id, { ...buildPayload(), projectName: name });
+      created = await createProject(name);
     } catch (e) {
-      console.warn('saveAs write failed', e);
+      if (isUnauthorized(e)) {
+        onUnauthorized();
+        return;
+      }
+      console.warn('createProject failed', e);
+      setError(`無法另存新專案：${saveErrorMessage(e)}`);
+      return;
     }
+    saver.setRevision(created.id, revisionOf(created));
+    const r = await saveNow(created.id, { ...buildPayload(), projectName: name });
     localStorage.setItem(CURRENT_PROJECT_KEY, String(created.id));
     setCurrentProjectId(created.id);
+    setConflictProjectId(null);
     setProjectName(name);
-    setSavedAt(new Date());
-    setProjects(await listProjects());
-  }, [currentProjectId, buildPayload]);
+    if (r.ok) {
+      skipNextContentSaveRef.current = true; // 剛存好的內容，不必再存一次
+      unsavedRef.current = false;
+      setSavedAt(new Date());
+      setSaveError(null);
+    } else {
+      setError(`已建立「${name}」，但內容沒有存進去：${r.message}`);
+    }
+    await refreshProjects();
+  }, [currentProjectId, conflictProjectId, hasUnsavedChanges, cancelPendingSave, saveNow, buildPayload, saver, onUnauthorized, refreshProjects]);
 
   // The delete dialog supplies the target id (current project by default, or any
   // other project picked from its dropdown). Only re-home the UI if we deleted
   // the project that's currently open.
   const handleDeleteProject = useCallback(async (id: number) => {
-    await deleteProject(id);
-    let list = await listProjects();
-    if (list.length === 0) {
-      const created = await createProject('未命名專案');
-      if (created) list = [created];
+    const deletingCurrent = id === currentProjectId;
+    if (deletingCurrent) cancelPendingSave(); // 不要再對已刪除的專案送存檔
+    try {
+      await deleteProject(id);
+    } catch (e) {
+      console.warn('deleteProject failed', e);
+      setError(`刪除失敗（${(e as Error).message}），專案沒有被刪除。`);
+      return;
+    }
+    let list: ProjectMeta[];
+    try {
+      list = await listProjects();
+      // 只有伺服器確實回了空清單才自動建一個
+      if (list.length === 0) list = [await createProject('未命名專案')];
+    } catch (e) {
+      if (isUnauthorized(e)) {
+        onUnauthorized();
+        return;
+      }
+      console.warn('refresh after delete failed', e);
+      // 讀不到清單：沿用畫面上的舊清單（扣掉剛刪的），不自動新建空白專案
+      list = projects.filter((p) => p.id !== id);
+      setError(`專案已刪除，但無法更新專案清單（${(e as Error).message}）。`);
     }
     setProjects(list);
-    if (id !== currentProjectId) return;
+    if (!deletingCurrent) return;
     const next = list[0] ?? null;
     if (next) {
-      // 同 handleSwitchProject：內容載入後才把 id 指過去，避免把已刪專案的內容存進 next
-      let project: ProjectState | null;
+      // 同 handleSwitchProject：內容載入並準備好後才把 id 指過去，避免把已刪專案的內容存進 next
+      let loaded: Awaited<ReturnType<typeof loadProject>>;
+      let prepared: PreparedProject;
       try {
-        project = await loadProject(next.id);
+        loaded = await loadProject(next.id);
+        prepared = prepareProject(loaded.project);
       } catch (e) {
+        if (isUnauthorized(e)) {
+          onUnauthorized();
+          return;
+        }
         console.warn('loadProject failed', e);
         setCurrentProjectId(null); // 暫停自動存檔，不覆蓋 next
-        applyProject(null);
+        applyProject(prepareProject(null));
         setError(loadFailedMessage(next.name, e));
         return;
       }
       localStorage.setItem(CURRENT_PROJECT_KEY, String(next.id));
+      saver.setRevision(next.id, loaded.revision);
       setCurrentProjectId(next.id);
-      applyProject(project);
+      applyProject(prepared, { loaded: true });
       setProjectName(next.name || '未命名專案');
     } else {
       setCurrentProjectId(null);
       localStorage.removeItem(CURRENT_PROJECT_KEY);
-      applyProject(null);
+      applyProject(prepareProject(null));
     }
-  }, [currentProjectId, applyProject]);
+  }, [currentProjectId, cancelPendingSave, applyProject, projects, saver, onUnauthorized]);
 
   const startPanelResize = (e: React.PointerEvent) => {
     e.preventDefault();
@@ -1094,6 +1322,7 @@ export default function App() {
         beforeBasemap={
           <ProjectBar
             savedAt={savedAt}
+            saveError={saveError}
             projects={projects}
             currentProjectId={currentProjectId}
             onSwitch={handleSwitchProject}

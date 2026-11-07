@@ -1,7 +1,7 @@
 """GIS_SESSION_SECRET 沒設（或沿用範例佔位字串）時，session 不能用公開字串簽章。
 
 repo 是公開的：只要伺服器用了 repo 裡寫死的預設值，任何人都能自己簽一個
-{"uid": N} 的 cookie，冒充任何使用者讀寫他的專案。
+{"uid": N, "sv": 0} 的 cookie，冒充任何使用者讀寫他的專案。
 """
 import pytest
 from itsdangerous import URLSafeTimedSerializer
@@ -27,7 +27,7 @@ def test_cannot_forge_session_with_public_secret(make_client, secret):
 
     attacker = another_client(client)
     for guess in PUBLIC_STRINGS[1:]:
-        forged = URLSafeTimedSerializer(guess, salt="gis-session").dumps({"uid": victim["id"]})
+        forged = URLSafeTimedSerializer(guess, salt="gis-session").dumps({"uid": victim["id"], "sv": 0})
         attacker.cookies.set(auth.COOKIE_NAME, forged)
         assert attacker.get("/api/me").status_code == 401
         assert attacker.get(f"/api/projects/{pid}").status_code == 401
@@ -44,7 +44,7 @@ def test_short_secret_is_rejected_and_cannot_forge(make_client, secret):
     victim = login(client, sub="1000002", email="victim2@example.com")
     attacker = another_client(client)
     # 攻擊者若猜中（或爆破出）這把短金鑰，就能簽出任何 uid 的 cookie
-    forged = URLSafeTimedSerializer(secret, salt="gis-session").dumps({"uid": victim["id"]})
+    forged = URLSafeTimedSerializer(secret, salt="gis-session").dumps({"uid": victim["id"], "sv": 0})
     attacker.cookies.set(auth.COOKIE_NAME, forged)
     assert attacker.get("/api/me").status_code == 401
 
@@ -62,7 +62,7 @@ def test_secret_of_exactly_32_chars_is_accepted(make_client):
     other = another_client(client)
     other.cookies.set(
         auth.COOKIE_NAME,
-        URLSafeTimedSerializer(secret, salt="gis-session").dumps({"uid": user["id"]}),
+        URLSafeTimedSerializer(secret, salt="gis-session").dumps({"uid": user["id"], "sv": 0}),
     )
     assert other.get("/api/me").status_code == 200
 
@@ -74,6 +74,6 @@ def test_configured_secret_is_used(make_client):
     other = another_client(client)
     other.cookies.set(
         auth.COOKIE_NAME,
-        URLSafeTimedSerializer(secret, salt="gis-session").dumps({"uid": user["id"]}),
+        URLSafeTimedSerializer(secret, salt="gis-session").dumps({"uid": user["id"], "sv": 0}),
     )
     assert other.get("/api/me").status_code == 200

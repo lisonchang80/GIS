@@ -102,6 +102,12 @@ export function LoginGate({ children }: { children: React.ReactNode }) {
     setPhase('anon');
   };
 
+  const handleSessionExpired = () => {
+    setUser(null);
+    setError('登入已失效（可能已在其他裝置登出），請重新登入。');
+    setPhase('anon');
+  };
+
   if (phase === 'loading') {
     return (
       <div className="login-screen">
@@ -111,7 +117,11 @@ export function LoginGate({ children }: { children: React.ReactNode }) {
   }
 
   if (phase === 'authed' && user) {
-    return <AuthProvider value={{ user, logout: handleLogout }}>{children}</AuthProvider>;
+    return (
+      <AuthProvider value={{ user, logout: handleLogout, onSessionExpired: handleSessionExpired }}>
+        {children}
+      </AuthProvider>
+    );
   }
 
   return (

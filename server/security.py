@@ -40,6 +40,32 @@ def project_body_limit() -> int:
     return int(mb * 1024 * 1024)
 
 
+# Per-user storage quota: anyone with a Google account can log in, so without a
+# cap one account could fill the host's disk with 50 MB projects.
+DEFAULT_MAX_PROJECTS = 50
+DEFAULT_MAX_USER_MB = 500
+
+
+def _positive_env(name: str, default, cast):
+    try:
+        value = cast(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def max_projects() -> int:
+    return _positive_env("GIS_MAX_PROJECTS", DEFAULT_MAX_PROJECTS, int)
+
+
+def max_user_mb() -> float:
+    return _positive_env("GIS_MAX_USER_MB", DEFAULT_MAX_USER_MB, float)
+
+
+def max_user_bytes() -> int:
+    return int(max_user_mb() * 1024 * 1024)
+
+
 def is_same_origin_request(headers: Headers, allowed_origins=frozenset()) -> bool:
     origin = headers.get("origin")
     if origin and origin.rstrip("/") in allowed_origins:

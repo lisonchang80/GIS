@@ -4,6 +4,9 @@ import type { AuthUser } from './auth';
 export interface AuthContextValue {
   user: AuthUser;
   logout: () => void;
+  // The server answered 401 (cookie expired / revoked by a logout elsewhere):
+  // go back to the login screen with an explanation.
+  onSessionExpired: () => void;
 }
 
 // Provided by LoginGate once authenticated; consumed by the panel header so the

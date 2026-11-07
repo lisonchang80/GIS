@@ -1,6 +1,7 @@
 import * as turf from '@turf/turf';
 import type { Feature, FeatureCollection, LineString, MultiLineString, Point } from 'geojson';
 import type {
+  ContourCapInfo,
   GwConcSubstance,
   SubstanceStyle,
   VectorLayer,
@@ -452,6 +453,75 @@ export function collectSamplesForDate(
   return out;
 }
 
+// 等值線數量上限：峰值和級距差距很大時（例如熱點 12 mg/L、級距 0.0025），線數與存檔
+// 大小會線性暴增（每個日期數千條、十幾 MB），超過單一專案的存檔上限就再也存不進去。
+// 主線最多 200 條；副線最多 800 條（＝主線上限 200 × 預設每格 4 條）。超過時只放大
+// 「實際畫出來」的級距，不改使用者設定的 majorInterval，並在圖層上標記（contourCap）。
+export const MAX_MAJOR_LINES = 200;
+export const MAX_MINOR_LINES = 800;
+
+const NICE_STEPS = [1, 2, 2.5, 5, 10];
+
+function tidy(n: number): number {
+  return Number(n.toPrecision(12));
+}
+
+function niceAtLeast(x: number): number {
+  const exp = Math.floor(Math.log10(x));
+  const base = 10 ** exp;
+  for (const m of NICE_STEPS) {
+    const v = tidy(m * base);
+    if (v >= x * (1 - 1e-9)) return v;
+  }
+  return tidy(10 * base);
+}
+
+function nextNice(x: number): number {
+  return niceAtLeast(x * (1 + 1e-6));
+}
+
+function countBreaks(zMin: number, zMax: number, interval: number): number {
+  const first = Math.ceil(zMin / interval - 1e-9);
+  const last = Math.floor(zMax / interval + 1e-9);
+  return Math.max(0, last - first + 1);
+}
+
+export interface ContourIntervalPlan {
+  majorInterval: number;
+  minorDivisions: number;
+  capped: boolean;
+}
+
+// 依資料範圍決定實際採用的主線級距與副線等分數（不超過上述上限）。
+export function capContourIntervals(
+  zMin: number,
+  zMax: number,
+  interval: number,
+  divisions: number,
+): ContourIntervalPlan {
+  if (!Number.isFinite(interval) || interval <= 0 || !Number.isFinite(zMin) || !Number.isFinite(zMax)) {
+    return { majorInterval: interval, minorDivisions: divisions, capped: false };
+  }
+  let major = interval;
+  let capped = false;
+  if (countBreaks(zMin, zMax, major) > MAX_MAJOR_LINES) {
+    capped = true;
+    major = Math.max(interval, niceAtLeast((zMax - zMin) / (MAX_MAJOR_LINES - 1)));
+    for (let guard = 0; countBreaks(zMin, zMax, major) > MAX_MAJOR_LINES && guard < 20; guard++) {
+      major = nextNice(major);
+    }
+  }
+  let minorDivisions = divisions;
+  if (Number.isFinite(divisions) && divisions >= 2) {
+    const spans = Math.max(1, Math.ceil((zMax - zMin) / major - 1e-9));
+    while (minorDivisions > 2 && spans * (minorDivisions - 1) > MAX_MINOR_LINES) {
+      minorDivisions -= 1;
+      capped = true;
+    }
+  }
+  return { majorInterval: major, minorDivisions, capped };
+}
+
 function computeMajorBreaks(zMin: number, zMax: number, interval: number): number[] {
   if (!Number.isFinite(interval) || interval <= 0) return [];
   const start = Math.floor(zMin / interval) * interval;
@@ -541,6 +611,7 @@ export function buildContourFeaturesForLayer(
   samplesOverride?: IDWSample[],
   thresholds?: ThresholdLine[],
   labelPrecision?: number,
+  onCap?: (plan: { majorInterval: number; minorDivisions: number }) => void,
 ): Feature[] {
   const samples = samplesOverride ?? collectSamplesForDate(sourceLayer, date);
   if (samples.length < 3) return [];
@@ -553,7 +624,17 @@ export function buildContourFeaturesForLayer(
   const out: Feature[] = [];
   const precision = labelPrecision ?? 2;
 
-  const majorBreaks = computeMajorBreaks(zMin, zMax, cfg.majorInterval);
+  const linePlan = capContourIntervals(zMin, zMax, cfg.majorInterval, cfg.minorDivisions);
+  const majorCapped = linePlan.majorInterval !== cfg.majorInterval;
+  const minorCapped = cfg.minorEnabled && linePlan.minorDivisions !== cfg.minorDivisions;
+  if (majorCapped || minorCapped) {
+    onCap?.({
+      majorInterval: linePlan.majorInterval,
+      minorDivisions: minorCapped ? linePlan.minorDivisions : cfg.minorDivisions,
+    });
+  }
+
+  const majorBreaks = computeMajorBreaks(zMin, zMax, linePlan.majorInterval);
   if (majorBreaks.length > 0) {
     const majorIso = turf.isolines(grid, majorBreaks, { zProperty: 'z' });
     for (const f of majorIso.features) {
@@ -572,7 +653,7 @@ export function buildContourFeaturesForLayer(
   }
 
   if (cfg.minorEnabled) {
-    const minorBreaks = computeMinorBreaks(zMin, zMax, cfg.majorInterval, cfg.minorDivisions);
+    const minorBreaks = computeMinorBreaks(zMin, zMax, linePlan.majorInterval, linePlan.minorDivisions);
     if (minorBreaks.length > 0) {
       const minorIso = turf.isolines(grid, minorBreaks, { zProperty: 'z' });
       for (const f of minorIso.features) {
@@ -737,7 +818,16 @@ export function buildContourLayerFeatures(
   fill?: WaterLevelFill,
   lines?: WaterLevelLines,
   arrows?: WaterLevelArrows,
-  options: { plan?: BandPlan; majorInterval?: number; model?: ContourModel; samples?: IDWSample[]; contourOpts?: ContourOptions; thresholds?: ThresholdLine[]; labelPrecision?: number } = {},
+  options: {
+    plan?: BandPlan;
+    majorInterval?: number;
+    model?: ContourModel;
+    samples?: IDWSample[];
+    contourOpts?: ContourOptions;
+    thresholds?: ThresholdLine[];
+    labelPrecision?: number;
+    onCap?: (plan: { majorInterval: number; minorDivisions: number }) => void;
+  } = {},
 ): Feature[] {
   const interval = options.majorInterval ?? lines?.majorInterval ?? DEFAULT_LINES.majorInterval;
   const arrowsCfg: Required<WaterLevelArrows> = { ...DEFAULT_ARROWS, ...(arrows ?? {}) };
@@ -749,7 +839,17 @@ export function buildContourLayerFeatures(
       samples: options.samples,
       contourOpts: options.contourOpts,
     }),
-    ...buildContourFeaturesForLayer(sourceLayer, date, lines, options.model, options.contourOpts ?? {}, options.samples, options.thresholds, options.labelPrecision),
+    ...buildContourFeaturesForLayer(
+      sourceLayer,
+      date,
+      lines,
+      options.model,
+      options.contourOpts ?? {},
+      options.samples,
+      options.thresholds,
+      options.labelPrecision,
+      options.onCap,
+    ),
     ...(arrowsCfg.enabled
       ? buildFlowArrowsForLayer(sourceLayer, date, {
           gridCells: arrowsCfg.divisions,
@@ -833,9 +933,38 @@ export function areaAboveThreshold(
   return area;
 }
 
+// 收集各物質（單一來源用 '*'）在所有日期中被放大得最多的級距。
+class CapCollector {
+  private readonly caps: Record<string, ContourCapInfo> = {};
+
+  reporter(key: string, lines: WaterLevelLines | undefined) {
+    const cfg: Required<WaterLevelLines> = { ...DEFAULT_LINES, ...(lines ?? {}) };
+    return (plan: { majorInterval: number; minorDivisions: number }) => {
+      const prev = this.caps[key];
+      const info: ContourCapInfo = {
+        requestedInterval: cfg.majorInterval,
+        effectiveInterval: Math.max(plan.majorInterval, prev?.effectiveInterval ?? 0),
+      };
+      if (cfg.minorEnabled && plan.minorDivisions !== cfg.minorDivisions) {
+        info.requestedMinorDivisions = cfg.minorDivisions;
+        info.effectiveMinorDivisions = Math.min(plan.minorDivisions, prev?.effectiveMinorDivisions ?? Infinity);
+      } else if (prev?.effectiveMinorDivisions !== undefined) {
+        info.requestedMinorDivisions = prev.requestedMinorDivisions;
+        info.effectiveMinorDivisions = prev.effectiveMinorDivisions;
+      }
+      this.caps[key] = info;
+    };
+  }
+
+  result(): Record<string, ContourCapInfo> | undefined {
+    return Object.keys(this.caps).length > 0 ? this.caps : undefined;
+  }
+}
+
 function rebuildContourLayer(target: VectorLayer, source: VectorLayer): VectorLayer {
   const wl = target.waterLevel!;
   const interval = wl.lines?.majorInterval ?? DEFAULT_LINES.majorInterval;
+  const caps = new CapCollector();
   const contourOpts: ContourOptions = {
     logTransform: wl.logTransform,
     clampNegative: wl.clampNegative,
@@ -882,6 +1011,7 @@ function rebuildContourLayer(target: VectorLayer, source: VectorLayer): VectorLa
           contourOpts: subOpts,
           thresholds,
           labelPrecision: subPrecision,
+          onCap: caps.reporter(sub.id, resolved.lines),
         });
         for (const f of feats) {
           allFeats.push({
@@ -899,6 +1029,7 @@ function rebuildContourLayer(target: VectorLayer, source: VectorLayer): VectorLa
       ...target,
       data: { type: 'FeatureCollection', features: allFeats } as FeatureCollection,
       featureCount: allFeats.length,
+      contourCap: caps.result(),
     };
   }
 
@@ -942,6 +1073,7 @@ function rebuildContourLayer(target: VectorLayer, source: VectorLayer): VectorLa
       contourOpts,
       thresholds,
       labelPrecision: singlePrecision,
+      onCap: caps.reporter('*', wl.lines),
     });
     allFeats.push(...feats);
   }
@@ -949,6 +1081,7 @@ function rebuildContourLayer(target: VectorLayer, source: VectorLayer): VectorLa
     ...target,
     data: { type: 'FeatureCollection', features: allFeats } as FeatureCollection,
     featureCount: allFeats.length,
+    contourCap: caps.result(),
   };
 }
 

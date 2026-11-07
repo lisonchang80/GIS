@@ -13,6 +13,11 @@ description: 把 GIS 的改動上線到正式站 https://gis.tinghaochang.com（
 - 動了 `server/*.py`（FastAPI / db）→ 走 **B. 重啟 :8000**（Python 程式只在啟動時 import，一定要重啟）。
 - 兩者都動 → 先 A 再 B（或先 B 再 A，順序不拘，但兩步都要做）。
 
+## 上線前檢查
+- `npm test`（vitest＋後端 pytest）。存檔流程的單元層回歸測試在 `src/projectData.test.ts`（prepareProject／buildProjectPayload）、`src/projectSaver.test.ts`（If-Match 排隊）、`src/persistence.test.ts`，後端在 `server/tests/test_optimistic_lock.py`。
+- **改到存檔／切換／載入流程時**，另外手動跑 `node scripts/e2e/autosave.mjs`（Playwright e2e；Playwright 不在 package.json，要先 `npm i -D playwright && npx playwright install chromium`）。
+- 前後端有協定變更（例如 ETag／If-Match、session 版本號）時，A、B 兩步都要做；session 格式變了，所有人要重新登入一次。
+
 ## A. 前端 dist 換檔
 `packaging\deploy.bat`：typecheck → `vite build --outDir dist_new` →（`dist`→`dist_prev`，`dist_new`→`dist`）。
 server StaticFiles 直讀磁碟，**換完立即生效、免重啟**。舊版留在 `dist_prev`，壞了 `packaging\rollback.bat` 秒退。

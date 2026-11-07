@@ -38,11 +38,8 @@ def test_cross_site_project_writes_are_blocked(authed, headers):
     client, pid = authed
     before = len(client.get("/api/projects").json())
     assert client.post("/api/projects", json={"name": "x"}, headers=headers).status_code == 403
-    assert client.patch(f"/api/projects/{pid}", json={"name": "x"}, headers=headers).status_code == 403
     assert client.put(f"/api/projects/{pid}", json={"version": 1, "layers": []}, headers=headers).status_code == 403
-    assert client.put("/api/project", json={"version": 1, "layers": []}, headers=headers).status_code == 403
     assert client.delete(f"/api/projects/{pid}", headers=headers).status_code == 403
-    assert client.delete("/api/project", headers=headers).status_code == 403
 
     assert len(client.get("/api/projects").json()) == before
     assert client.get(f"/api/projects/{pid}").json()["layers"] == [1]
@@ -57,16 +54,16 @@ def test_cross_site_login_is_blocked(client):
 
 
 def test_same_origin_and_non_browser_clients_still_work(authed):
-    client, pid = authed
-    r = client.patch(f"/api/projects/{pid}", json={"name": "新名"}, headers=SAME_ORIGIN)
+    client, _ = authed
+    r = client.post("/api/projects", json={"name": "新名"}, headers=SAME_ORIGIN)
     assert r.status_code == 200
     # 舊瀏覽器沒有 Sec-Fetch-Site，但 Origin 與 Host 相同
-    r = client.patch(f"/api/projects/{pid}", json={"name": "新名2"}, headers={"Origin": "https://testserver"})
+    r = client.post("/api/projects", json={"name": "新名2"}, headers={"Origin": "https://testserver"})
     assert r.status_code == 200
     # 使用者自己在網址列操作（Sec-Fetch-Site: none）與 curl／腳本（不帶 Origin）
-    r = client.patch(f"/api/projects/{pid}", json={"name": "新名3"}, headers={"Sec-Fetch-Site": "none"})
+    r = client.post("/api/projects", json={"name": "新名3"}, headers={"Sec-Fetch-Site": "none"})
     assert r.status_code == 200
-    assert client.patch(f"/api/projects/{pid}", json={"name": "新名4"}).status_code == 200
+    assert client.post("/api/projects", json={"name": "新名4"}).status_code == 200
 
 
 def test_reads_are_not_affected(authed):

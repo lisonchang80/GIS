@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import db
 from .routes import router
-from .security import BodySizeLimit, SameOriginWriteGuard, project_body_limit
+from .security import BodySizeLimit, FrameGuard, SameOriginWriteGuard, project_body_limit
 
 db.init_db()
 
@@ -44,6 +44,8 @@ app.add_middleware(
 # Writes must come from this origin (or an explicitly CORS-allowed one).
 app.add_middleware(SameOriginWriteGuard, allowed_origins=cors_origins)
 app.add_middleware(BodySizeLimit, project_limit=project_body_limit())
+# Outermost: every response (API, SPA, 404, 401, 403, 413) is un-frameable.
+app.add_middleware(FrameGuard)
 
 app.include_router(router)
 

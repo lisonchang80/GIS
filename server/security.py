@@ -6,6 +6,12 @@ state-changing request is only accepted when the browser says it came from this
 exact origin. Non-browser clients (curl, scripts) send neither Sec-Fetch-Site nor
 Origin and are let through: they don't carry a victim's cookie automatically.
 
+FrameGuard: every response carries X-Frame-Options: DENY and CSP frame-ancestors
+'none', so no page (not even a sibling *.tinghaochang.com page whose iframe would
+carry the SameSite=Lax session cookie) can frame the app and trick a logged-in
+user into clicking its delete/save buttons (clickjacking). The app is never
+meant to be embedded.
+
 BodySizeLimit: uvicorn has no body limit, and FastAPI reads + JSON-parses a
 Pydantic body *before* the auth dependency runs, so without this an anonymous
 client could make the server buffer an arbitrarily large body.
@@ -22,7 +28,7 @@ SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 DEFAULT_BODY_LIMIT = 64 * 1024  # login token / project name: a few KB at most
 # Whole-project saves are the only big bodies (ProjectState JSON).
-_PROJECT_SAVE = re.compile(r"^/api/project(s/[^/]+)?$")
+_PROJECT_SAVE = re.compile(r"^/api/projects/[^/]+$")
 DEFAULT_PROJECT_MB = 50  # the bundled demo project is ~3.4 MB
 
 
@@ -100,3 +106,28 @@ class BodySizeLimit:
             return message
 
         await self.app(scope, limited_receive, send)
+
+
+class FrameGuard:
+    """Pure ASGI (adds headers on http.response.start only), so it also covers
+    responses produced by the other middlewares (403 / 413) and by StaticFiles."""
+
+    HEADERS = [
+        (b"x-frame-options", b"DENY"),
+        (b"content-security-policy", b"frame-ancestors 'none'"),
+    ]
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                message = {**message, "headers": [*message.get("headers", []), *self.HEADERS]}
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)

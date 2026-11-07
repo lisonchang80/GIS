@@ -135,53 +135,6 @@ def get_user(uid: int):
         conn.close()
 
 
-def get_project(uid: int):
-    """Most-recent project for the user (MVP = single project per user)."""
-    conn = get_conn()
-    try:
-        row = conn.execute(
-            "SELECT * FROM projects WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1",
-            (uid,),
-        ).fetchone()
-        return dict(row) if row else None
-    finally:
-        conn.close()
-
-
-def put_project(uid: int, version: int, data_json: str, name: str = "My Project") -> str:
-    conn = get_conn()
-    try:
-        ts = now_iso()
-        existing = conn.execute(
-            "SELECT id FROM projects WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1",
-            (uid,),
-        ).fetchone()
-        if existing:
-            conn.execute(
-                "UPDATE projects SET version=?, data=?, updated_at=? WHERE id=?",
-                (version, data_json, ts, existing["id"]),
-            )
-        else:
-            conn.execute(
-                "INSERT INTO projects (user_id, name, version, data, created_at, updated_at)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
-                (uid, name, version, data_json, ts, ts),
-            )
-        conn.commit()
-        return ts
-    finally:
-        conn.close()
-
-
-def delete_project(uid: int) -> None:
-    conn = get_conn()
-    try:
-        conn.execute("DELETE FROM projects WHERE user_id = ?", (uid,))
-        conn.commit()
-    finally:
-        conn.close()
-
-
 # ---- multi-project (explicit ids, all scoped to the owner) ----
 def list_projects(uid: int):
     conn = get_conn()

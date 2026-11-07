@@ -70,3 +70,38 @@ def test_tampered_or_expired_session_is_rejected(client, monkeypatch):
     client.cookies.clear()
     client.cookies.set(auth.COOKIE_NAME, stale)
     assert client.get("/api/me").status_code == 401
+
+
+def test_junk_credential_rejected_without_fetching_certs(client, monkeypatch):
+    from google.oauth2 import id_token as google_id_token
+
+    calls = []
+    monkeypatch.setattr(google_id_token, "_fetch_certs", lambda req, url: calls.append(url) or {})
+    for junk in ("x", "a.b", "a.b.c.d", "a." + "b" * 5000 + ".c", "a.b$.c"):
+        assert _post(client, junk).status_code == 401
+    assert calls == []
+
+
+def test_google_certs_response_is_cached(monkeypatch):
+    from google.auth.transport import requests as g_requests
+
+    calls = []
+
+    class FakeResp:
+        status = 200
+        headers = {"Cache-Control": "public, max-age=19000, must-revalidate"}
+        data = b"{}"
+
+    class FakeRequest:
+        def __call__(self, url, method="GET", **kwargs):
+            calls.append(url)
+            return FakeResp()
+
+    monkeypatch.setattr(g_requests, "Request", FakeRequest)
+    monkeypatch.setattr(auth, "_certs_cache", {})
+    url = "https://www.googleapis.com/oauth2/v1/certs"
+    first = auth._cached_request(url, method="GET")
+    second = auth._cached_request(url, method="GET")
+    assert first is second
+    assert calls == [url]
+    assert auth._certs_ttl(FakeResp.headers) == 19000

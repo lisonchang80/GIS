@@ -114,35 +114,12 @@ def me(uid: int = Depends(current_uid)):
     return {"user": _public_user(db.get_user(uid))}
 
 
-# ---- project ----
-@router.get("/project")
-def get_project_route(uid: int = Depends(current_uid)):
-    row = db.get_project(uid)
-    if not row:
-        return Response(status_code=204)
-    return JSONResponse(content=json.loads(row["data"]))
-
-
-@router.put("/project")
-async def put_project_route(request: Request, uid: int = Depends(current_uid)):
-    version, name, data_json = await read_project_payload(request, "My Project")
-    saved_at = db.put_project(uid, version, data_json, name)
-    return {"savedAt": saved_at}
-
-
-@router.delete("/project")
-def delete_project_route(uid: int = Depends(current_uid)):
-    db.delete_project(uid)
-    return {"ok": True}
-
-
-# ---- multi-project (explicit ids) ----
+# ---- projects (explicit ids) ----
+# The old single-project /api/project (GET/PUT/DELETE) and PATCH rename routes
+# were removed: the frontend never calls them, DELETE wiped ALL of the user's
+# projects, and a rename was overwritten by the next PUT's projectName.
 class CreateProjectBody(BaseModel):
     name: str | None = None
-
-
-class RenameBody(BaseModel):
-    name: str
 
 
 @router.get("/projects")
@@ -172,13 +149,6 @@ async def put_project_by_id_route(pid: int, request: Request, uid: int = Depends
     if not ok:
         raise HTTPException(status_code=404, detail="not found")
     return {"savedAt": ts}
-
-
-@router.patch("/projects/{pid}")
-def rename_project_route(pid: int, body: RenameBody, uid: int = Depends(current_uid)):
-    if not db.rename_project_by_id(uid, pid, body.name):
-        raise HTTPException(status_code=404, detail="not found")
-    return {"ok": True}
 
 
 @router.delete("/projects/{pid}")

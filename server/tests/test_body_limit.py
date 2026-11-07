@@ -26,11 +26,9 @@ def test_chunked_body_without_content_length_is_rejected(client):
     assert r.status_code == 413
 
 
-def test_huge_create_and_rename_are_rejected(client):
+def test_huge_create_is_rejected(client):
     login(client)
     assert client.post("/api/projects", json={"name": "a" * BIG}).status_code == 413
-    pid = client.post("/api/projects", json={"name": "ok"}).json()["id"]
-    assert client.patch(f"/api/projects/{pid}", json={"name": "a" * BIG}).status_code == 413
 
 
 def test_normal_requests_and_project_saves_still_work(client):
@@ -39,7 +37,6 @@ def test_normal_requests_and_project_saves_still_work(client):
     pid = client.post("/api/projects", json={"name": "ok"}).json()["id"]
     project = {"version": 1, "projectName": "大專案", "layers": [{"blob": "x" * (5 * BIG)}]}
     assert client.put(f"/api/projects/{pid}", json=project).status_code == 200
-    assert client.put("/api/project", json=project).status_code == 200
     assert len(client.get(f"/api/projects/{pid}").json()["layers"][0]["blob"]) == 5 * BIG
 
 
@@ -52,7 +49,6 @@ def test_project_save_has_configurable_cap(make_client):
     pid = client.post("/api/projects", json={"name": "p"}).json()["id"]
     project = {"version": 1, "layers": [{"blob": "x" * (2 * BIG)}]}
     assert client.put(f"/api/projects/{pid}", json=project).status_code == 413
-    assert client.put("/api/project", json=project).status_code == 413
     small = {"version": 1, "layers": [{"blob": "x" * (BIG // 2)}]}
     assert client.put(f"/api/projects/{pid}", json=small).status_code == 200
 

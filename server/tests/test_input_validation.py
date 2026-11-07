@@ -27,7 +27,7 @@ def authed(client):
 
 
 @pytest.mark.parametrize("body", BAD_BODIES)
-@pytest.mark.parametrize("path", ["/api/projects/{pid}", "/api/project"])
+@pytest.mark.parametrize("path", ["/api/projects/{pid}"])
 def test_bad_project_bodies_are_rejected_cleanly(authed, body, path):
     c, pid = authed
     r = c.put(path.format(pid=pid), content=body, headers={"Content-Type": "application/json"})

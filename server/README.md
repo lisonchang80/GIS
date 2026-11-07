@@ -1,8 +1,8 @@
 # GIS backend (FastAPI + SQLite + Google login)
 
 Per-user project storage. The frontend talks to this through `src/persistence.ts`
-(`/api/project`) and `src/auth.ts` (`/api/auth/*`). One project per user (MVP);
-the schema already supports multiple.
+(`/api/projects`, `/api/projects/{id}`) and `src/auth.ts` (`/api/auth/*`).
+Each user can have multiple projects.
 
 ## Setup (Windows, no admin needed)
 
@@ -46,18 +46,15 @@ Do NOT also put Cloudflare Access in front (it would double the login).
 | POST   | /api/auth/google   | -    | verify Google ID token, set cookie |
 | POST   | /api/auth/logout   | -    | clear cookie                    |
 | GET    | /api/me            | yes  | current user or 401             |
-| GET    | /api/project       | yes  | latest project (204 if none)    |
-| PUT    | /api/project       | yes  | upsert project                  |
-| DELETE | /api/project       | yes  | clear project                   |
 | GET    | /api/projects      | yes  | list own projects               |
 | POST   | /api/projects      | yes  | create project                  |
-| GET/PUT/PATCH/DELETE | /api/projects/{id} | yes | load / save / rename / delete (owner only, else 404) |
+| GET/PUT/DELETE | /api/projects/{id} | yes | load (204 if empty) / save (name from `projectName`) / delete (owner only, else 404) |
 
 ## Security behaviour
 
-- `GIS_SESSION_SECRET` unset (or a placeholder from this repo) → a random secret
-  per process is used and a warning is logged: nobody can forge a session, but
-  everyone is logged out on restart. Always set it in production.
+- `GIS_SESSION_SECRET` unset, a placeholder from this repo, or shorter than 32
+  characters → a random secret per process is used and a warning is logged: nobody can forge a session, but
+  everyone is logged out on restart. Always set it (32+ random characters) in production.
 - Session cookie is `__Host-gis_session` (HttpOnly, Secure, SameSite=Lax, no
   Domain) when `GIS_COOKIE_SECURE=1`, so sibling `*.tinghaochang.com` pages
   can't plant one; plain-http dev uses `gis_session`.
@@ -66,7 +63,7 @@ Do NOT also put Cloudflare Access in front (it would double the login).
   requests without `Origin` (curl, scripts) are allowed. `GIS_CORS_ORIGINS`
   (default: none) lists extra trusted origins.
 - Body limits: 64 KB for everything except whole-project saves
-  (`PUT /api/project`, `PUT /api/projects/{id}`), which are capped by
+  (`PUT /api/projects/{id}`), which are capped by
   `GIS_MAX_PROJECT_MB` (default 50). Over the limit → 413.
 - Google tokens must have `email_verified`; failed logins return a generic
   `invalid credential` (details only in the server log); a missing

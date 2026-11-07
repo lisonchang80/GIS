@@ -736,6 +736,11 @@ export default function App() {
     setError(null);
     try {
       const project = await importProjectFile(file);
+      if (
+        !window.confirm(
+          `匯入會取代目前專案「${projectName || '未命名專案'}」的全部內容（圖層、繪圖、底圖與名稱），確定？`,
+        )
+      ) return;
       applyProject(project);
     } catch (e) {
       setError(`匯入失敗: ${(e as Error).message}`);

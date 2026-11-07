@@ -37,6 +37,7 @@ import {
   readSoilConc,
 } from './exceedance';
 import { fileToGeoJSON, ensureNames } from './importers';
+import { readCsvText } from './csvText';
 
 // 地下水位「等水位線／流向」圖層生成時套用的預設樣式（只影響水位等高線，不動 gw-conc／soil）。
 const WATER_LEVEL_BASE_STYLE = {
@@ -859,9 +860,7 @@ export function AttributeTable({
   };
 
   const handleImportRecord = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const text = String(reader.result ?? '').replace(/^\uFEFF/, '');
+    void readCsvText(file).then((text) => {
       const rows = parseCsv(text);
       if (rows.length < 2) {
         window.alert('CSV 沒有資料');
@@ -923,8 +922,7 @@ export function AttributeTable({
       window.alert(
         `匯入完成：${imported} 筆${skipped > 0 ? `，${skipped} 筆忽略（名稱對不到或數值無效）` : ''}`,
       );
-    };
-    reader.readAsText(file, 'utf-8');
+    });
   };
 
   const handleGenerateSingleContour = (date: string) => {
@@ -2608,9 +2606,7 @@ function GwConcTabPanel({
   const cancelCellEdit = () => setCellEditing(null);
 
   const handleImportReport = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const text = String(reader.result ?? '').replace(/^\uFEFF/, '');
+    void readCsvText(file).then((text) => {
       const rows = parseCsv(text);
       if (rows.length < 2) {
         window.alert('CSV 沒有資料');
@@ -2704,8 +2700,7 @@ function GwConcTabPanel({
       window.alert(
         `匯入完成：${imported} 筆${skipped > 0 ? `，${skipped} 筆忽略（名稱對不到 / 數值無效 / 欄位空白）` : ''}`,
       );
-    };
-    reader.readAsText(file, 'utf-8');
+    });
   };
 
   const handleGenerateSingleConc = (date: string) => {
@@ -3440,9 +3435,7 @@ function SoilConcTabPanel({
   };
 
   const handleImportReport = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const text = String(reader.result ?? '').replace(/^\uFEFF/, '');
+    void readCsvText(file).then((text) => {
       const rows = parseCsv(text);
       if (rows.length < 2) {
         window.alert('CSV 沒有資料');
@@ -3526,8 +3519,7 @@ function SoilConcTabPanel({
         data: { ...layer.data, features: newFeatures } as FeatureCollection,
       });
       window.alert(`匯入完成：${imported} 筆${skipped > 0 ? `，${skipped} 筆忽略（名稱對不到 / 數值無效 / 欄位空白）` : ''}`);
-    };
-    reader.readAsText(file, 'utf-8');
+    });
   };
 
   const makeExceedanceLayer = (name: string, features: Feature[], config: ExceedanceConfig): VectorLayer => ({

@@ -55,12 +55,18 @@ description: >
 ## 整理（GET → tidy → 寫檔）
 衍生圖層**自動命名**（如「SGS… 多污染物 2024-11-20」「2024-11-20」）很醜 → GET 後用 Python 改名、重排（點在上、線等值線中、多邊形底）、設預設 `visible`（首屏只開重點層）、設 `mapView`。偵測衍生層：gw-conc 等濃度線 `waterLevel.sourceKind==='gw-conc'`；等水位線 `kind==='line' && waterLevel && !sourceKind`；超標圖 `layer.exceedance`。**cp950 console 印中文會炸**（檔案已寫成功，只是 print 失敗）→ 用 `io.TextIOWrapper(sys.stdout.buffer,'utf-8')` 或別印中文。
 
-## 衍生圖層是「烘焙」的 → 改生成相關程式後要重生 demo 才生效
-demo JSON 把等水位線/等濃度線/超標圖的 features **烘死在檔案裡**（非執行期重算）。所以只要改到
-**生成階段**會影響輸出的程式（樣式預設、填色 plan、流向演算法、isobands/面積、箭頭等分…），
-舊 demo **不會**自動反映 → 必須**整批重生**：seed→隔離後端→UI 逐層點生成→`server/_<name>_export.py`
+## 衍生圖層：features 載入時重建，只有 waterLevel／exceedance 設定是「烘焙」的
+demo JSON 雖然存著等水位線/等濃度線/超標圖的 features，但開頁與匯入／切換專案時
+（`App.tsx` 的 `syncAllExceedance(syncAllContours(...))`）只要**來源圖層（與對應分頁）還在**，
+`rebuildContourLayer`／`rebuildExceedanceLayer` 會依**現行程式**整個取代 `data.features`。
+所以只改**演算法**（流向、isobands/面積、內插、多污染物等濃度線的執行期預設樣式
+`resolveSubstanceStyle`→`makeGwConcDefaultsForSub`）**不需要**重生 demo，載入就吃到新程式。
+真正烘焙的是**生成當下寫進 `waterLevel`／`exceedance` 的設定**：等水位線的 fill bands／lines／
+arrows 預設、dates、model、明確的 `substanceStyles` 覆寫、批次形狀等。改的是這類**生成時預設值**，
+舊 demo 才不會反映 → 必須**整批重生**：seed→隔離後端→UI 逐層點生成→`server/_<name>_export.py`
 tidy→覆寫 `examples/<name>.json`，再重匯入驗證。保留各 demo 的 export 腳本邏輯（改名/排序/可見/
-mapView/預設期）方便重跑。⚠️ 但 **3D 垂向（iso3d）是執行期算**的，survey 點資料不變就免重生，會自動吃新檢視器程式。
+mapView/預設期）方便重跑。features 仍會存進檔案，所以上面「導出後檢查檔案大小」照做。
+3D 垂向（iso3d）也是執行期算的，survey 點資料不變就免重生。
 
 ## 驗證 / 交付
 - 最終一定要**把產出的 JSON 當新專案重新匯入**（POST+PUT 或 App 匯入）再 reload，確認層數/順序/預設顯示/legend/無 console error。
